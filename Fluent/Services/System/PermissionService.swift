@@ -16,20 +16,56 @@ class PermissionService: ObservableObject {
     @Published var accessibilityStatus: PermissionStatus = .notDetermined
 
     private init() {
-        refreshAllStatuses()
+        print("[PermissionService] init started")
+        // Don't block init - refresh async to avoid main thread freeze
+        Task {
+            await refreshAllStatusesAsync()
+        }
+        print("[PermissionService] init completed (async refresh scheduled)")
     }
 
     func refreshAllStatuses() {
+        print("[PermissionService] refreshAllStatuses called (sync)")
         refreshMicrophoneStatus()
         refreshInputMonitoringStatus()
         refreshAccessibilityStatus()
+        print("[PermissionService] refreshAllStatuses completed")
+    }
+
+    /// Async version that moves blocking calls off main thread
+    func refreshAllStatusesAsync() async {
+        print("[PermissionService] refreshAllStatusesAsync started")
+
+        // Run blocking system calls on background thread
+        let (micStatus, inputTrusted, accessTrusted) = await Task.detached {
+            print("[PermissionService] Checking permissions on background thread...")
+            let mic = AVCaptureDevice.authorizationStatus(for: .audio)
+            print("[PermissionService] Microphone status checked")
+            let input = CGPreflightListenEventAccess()
+            print("[PermissionService] Input monitoring checked: \(input)")
+            let access = AXIsProcessTrusted()
+            print("[PermissionService] Accessibility checked: \(access)")
+            return (mic, input, access)
+        }.value
+
+        // Update UI on main thread
+        await MainActor.run {
+            self.microphoneStatus = self.convertAVAuthorizationStatus(micStatus)
+            self.inputMonitoringStatus = inputTrusted ? .authorized : .denied
+            self.accessibilityStatus = accessTrusted ? .authorized : .denied
+            print("[PermissionService] UI updated with permission statuses")
+        }
+
+        print("[PermissionService] refreshAllStatusesAsync completed")
     }
 
     // MARK: - Microphone Permission
 
     func refreshMicrophoneStatus() {
+        print("[PermissionService] refreshMicrophoneStatus called")
         let status = AVCaptureDevice.authorizationStatus(for: .audio)
         microphoneStatus = convertAVAuthorizationStatus(status)
+        print("[PermissionService] Microphone status: \(microphoneStatus)")
     }
 
     func requestMicrophoneAccess() async -> Bool {
@@ -53,8 +89,10 @@ class PermissionService: ObservableObject {
     // MARK: - Input Monitoring Permission (for CGEventTap)
 
     func refreshInputMonitoringStatus() {
+        print("[PermissionService] refreshInputMonitoringStatus called (BLOCKING)")
         let trusted = CGPreflightListenEventAccess()
         inputMonitoringStatus = trusted ? .authorized : .denied
+        print("[PermissionService] Input monitoring status: \(inputMonitoringStatus)")
     }
 
     func requestInputMonitoringAccess() {
@@ -78,8 +116,10 @@ class PermissionService: ObservableObject {
     // MARK: - Accessibility Permission (for paste simulation)
 
     func refreshAccessibilityStatus() {
+        print("[PermissionService] refreshAccessibilityStatus called (BLOCKING)")
         let trusted = AXIsProcessTrusted()
         accessibilityStatus = trusted ? .authorized : .denied
+        print("[PermissionService] Accessibility status: \(accessibilityStatus)")
     }
 
     func requestAccessibilityAccess() {

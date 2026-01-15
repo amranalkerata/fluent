@@ -131,13 +131,27 @@ class AppState: ObservableObject {
         isStoppingRecording = true
 
         Task {
+            // Capture duration before stopping (it gets reset)
+            let duration = recordingDuration
+
             recordingURL = await audioService.stopRecording()
-            NotificationCenter.default.post(name: .hideRecordingOverlay, object: nil)
+            // Don't hide overlay yet - let it show processing state
 
             if let url = recordingURL {
+                // Validate minimum duration
+                if duration < AudioRecordingService.minimumRecordingDuration {
+                    audioService.deleteRecording(at: url)
+                    transcriptionError = RecordingError.recordingTooShort.localizedDescription
+                    NotificationCenter.default.post(name: .hideRecordingOverlay, object: nil)
+                    isStoppingRecording = false
+                    workflowInProgress = false
+                    return
+                }
+
                 await transcribeRecording(url: url)
             } else {
-                // No URL means recording was cancelled or failed
+                // No URL means recording was cancelled or failed - hide now
+                NotificationCenter.default.post(name: .hideRecordingOverlay, object: nil)
                 isStoppingRecording = false
                 workflowInProgress = false
             }
@@ -161,7 +175,8 @@ class AppState: ObservableObject {
     private func transcribeRecording(url: URL) async {
         guard !isTranscribing else {
             print("Already transcribing, ignoring duplicate request")
-            // Reset flags since we're not proceeding
+            // Reset flags and hide overlay since we're not proceeding
+            NotificationCenter.default.post(name: .hideRecordingOverlay, object: nil)
             isStoppingRecording = false
             workflowInProgress = false
             return
@@ -179,11 +194,19 @@ class AppState: ObservableObject {
             isTranscribing = false
             isStoppingRecording = false
             workflowInProgress = false
+            // Hide overlay after workflow completes
+            NotificationCenter.default.post(name: .hideRecordingOverlay, object: nil)
         }
 
         do {
             let transcriptionService = TranscriptionService()
             let originalResult = try await transcriptionService.transcribe(audioURL: url)
+
+            // Check for empty transcription (silence/no speech detected)
+            if originalResult.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                transcriptionError = RecordingError.noSpeechDetected.localizedDescription
+                return
+            }
 
             var finalResult = originalResult
             var enhancedResult: String? = nil

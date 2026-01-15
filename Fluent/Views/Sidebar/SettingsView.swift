@@ -310,9 +310,17 @@ struct AboutSettingsCard: View {
                 .font(.Fluent.caption)
                 .foregroundStyle(FluentColors.textSecondary)
 
-            Text("Developed by Amran Al Kerata")
-                .font(.Fluent.caption)
-                .foregroundStyle(FluentColors.textSecondary)
+            VStack(alignment: .leading, spacing: FluentSpacing.sm) {
+                Image("CreatorPhoto")
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: 48, height: 48)
+                    .clipShape(Circle())
+
+                Text("Developed by Amran Al Kerata")
+                    .font(.Fluent.caption)
+                    .foregroundStyle(FluentColors.textSecondary)
+            }
 
             HStack(spacing: FluentSpacing.md) {
                 Link(destination: URL(string: "https://kerata.net")!) {

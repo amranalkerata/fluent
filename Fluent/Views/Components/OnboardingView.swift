@@ -8,9 +8,12 @@ struct OnboardingView: View {
     private let totalSteps = 4
 
     init() {
+        print("[OnboardingView] init started")
         // Always start at Welcome step
         _currentStep = State(initialValue: 0)
+        print("[OnboardingView] About to call hasAPIKey()")
         _apiKeyValid = State(initialValue: KeychainService.shared.hasAPIKey())
+        print("[OnboardingView] init completed")
     }
 
     var body: some View {
@@ -46,12 +49,16 @@ struct OnboardingView: View {
                 switch currentStep {
                 case 0:
                     WelcomeStep()
+                        .onAppear { print("[Onboarding] WelcomeStep appeared") }
                 case 1:
                     APIKeyStep(isValid: $apiKeyValid)
+                        .onAppear { print("[Onboarding] APIKeyStep appeared") }
                 case 2:
                     PermissionsStep()
+                        .onAppear { print("[Onboarding] PermissionsStep appeared") }
                 default:
                     ReadyStep()
+                        .onAppear { print("[Onboarding] ReadyStep appeared") }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -60,9 +67,8 @@ struct OnboardingView: View {
             HStack(spacing: FluentSpacing.md) {
                 if currentStep > 0 {
                     FluentButton("Back", icon: "chevron.left", variant: .secondary) {
-                        withAnimation(FluentAnimation.normal) {
-                            currentStep -= 1
-                        }
+                        // NOTE: Removed withAnimation - causes deadlock with SecureField on macOS
+                        currentStep -= 1
                     }
                 }
 
@@ -70,9 +76,10 @@ struct OnboardingView: View {
 
                 if currentStep < totalSteps - 1 {
                     FluentButton("Continue", icon: "chevron.right", iconPosition: .trailing, variant: .primary) {
-                        withAnimation(FluentAnimation.normal) {
-                            currentStep += 1
-                        }
+                        print("[Onboarding] Continue tapped, currentStep: \(currentStep) → \(currentStep + 1)")
+                        // NOTE: Removed withAnimation - causes deadlock with SecureField on macOS
+                        currentStep += 1
+                        print("[Onboarding] Step transition complete")
                     }
                     .disabled(currentStep == 1 && !apiKeyValid)
                 } else {
@@ -155,10 +162,23 @@ struct APIKeyStep: View {
     @State private var isValidating = false
     @State private var error: String?
 
-    private let keychainService = KeychainService.shared
+    private let keychainService: KeychainService
+
+    init(isValid: Binding<Bool>) {
+        print("[APIKeyStep] init started")
+        // CRITICAL: Must explicitly initialize @State when using custom init
+        self._isValid = isValid
+        self._apiKey = State(initialValue: "")
+        self._isValidating = State(initialValue: false)
+        self._error = State(initialValue: nil)
+        print("[APIKeyStep] About to access KeychainService.shared")
+        self.keychainService = KeychainService.shared
+        print("[APIKeyStep] init completed")
+    }
 
     var body: some View {
-        VStack(spacing: FluentSpacing.lg) {
+        let _ = print("[APIKeyStep] body computed - START")
+        return VStack(spacing: FluentSpacing.lg) {
             Image(systemName: "key.fill")
                 .font(.system(size: 48))
                 .foregroundStyle(FluentColors.warning.gradient)
@@ -174,7 +194,9 @@ struct APIKeyStep: View {
             }
 
             VStack(spacing: FluentSpacing.md) {
-                FluentSecureField("sk-...", text: $apiKey)
+                // TEST: Using plain SecureField instead of FluentSecureField
+                SecureField("sk-...", text: $apiKey)
+                    .textFieldStyle(.roundedBorder)
                     .frame(maxWidth: 350)
 
                 if let error = error {
@@ -214,34 +236,50 @@ struct APIKeyStep: View {
     }
 
     private func validateKey() {
+        print("[validateKey] START")
         let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard keychainService.isValidAPIKeyFormat(trimmedKey) else {
+            print("[validateKey] Invalid format")
             error = "Invalid format. API keys start with 'sk-'"
             return
         }
 
+        print("[validateKey] Setting isValidating = true")
         isValidating = true
         error = nil
 
+        print("[validateKey] Creating Task")
         Task {
+            print("[validateKey] Task started")
             let service = TranscriptionService()
+            print("[validateKey] About to call testAPIKey")
             let valid = await service.testAPIKey(trimmedKey)
+            print("[validateKey] testAPIKey returned: \(valid)")
 
+            print("[validateKey] About to run MainActor.run")
             await MainActor.run {
+                print("[validateKey] Inside MainActor.run")
                 isValidating = false
                 if valid {
+                    print("[validateKey] API key valid, saving to keychain")
                     let saved = keychainService.saveAPIKey(trimmedKey)
                     if saved {
+                        print("[validateKey] Saved successfully, setting isValid = true")
                         isValid = true
                     } else {
+                        print("[validateKey] Failed to save")
                         error = "Failed to save API key to Keychain"
                     }
                 } else {
+                    print("[validateKey] API key invalid")
                     error = "Invalid API key. Please check and try again."
                 }
+                print("[validateKey] MainActor.run completed")
             }
+            print("[validateKey] Task completed")
         }
+        print("[validateKey] END (Task launched)")
     }
 }
 
@@ -301,7 +339,10 @@ struct PermissionsStep: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(FluentSpacing.cardPadding)
         .onAppear {
-            permissionService.refreshAllStatuses()
+            print("[PermissionsStep] onAppear - refreshing statuses async")
+            Task {
+                await permissionService.refreshAllStatusesAsync()
+            }
         }
     }
 }

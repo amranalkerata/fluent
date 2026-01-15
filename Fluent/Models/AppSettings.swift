@@ -13,7 +13,7 @@ struct AppSettings: Codable, Equatable {
     var launchAtLogin: Bool = false
 
     // MARK: - Overlay Settings
-    var overlayPosition: OverlayPosition = .topCenter
+    var overlayPosition: OverlayPosition = .bottomCenter
 
     // MARK: - Audio Settings
     var audioQuality: AudioQuality = .high

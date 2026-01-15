@@ -7,6 +7,8 @@ enum RecordingError: LocalizedError {
     case audioEngineStartFailed
     case fileCreationFailed
     case noInputDevice
+    case recordingTooShort
+    case noSpeechDetected
 
     var errorDescription: String? {
         switch self {
@@ -18,12 +20,20 @@ enum RecordingError: LocalizedError {
             return "Failed to create audio file for recording."
         case .noInputDevice:
             return "No audio input device found. Please connect a microphone."
+        case .recordingTooShort:
+            return "Recording too short. Please hold for at least one second."
+        case .noSpeechDetected:
+            return "Couldn't detect anything. Please try again."
         }
     }
 }
 
 @MainActor
 class AudioRecordingService: ObservableObject {
+    // Duration limits
+    static let minimumRecordingDuration: TimeInterval = 1.0  // 1 second
+    static let maximumRecordingDuration: TimeInterval = 300  // 5 minutes
+
     @Published var isRecording = false
     @Published var audioLevels: [Float] = []
     @Published var recordingDuration: TimeInterval = 0
@@ -211,6 +221,11 @@ class AudioRecordingService: ObservableObject {
             Task { @MainActor in
                 guard let self = self, let startTime = self.recordingStartTime else { return }
                 self.recordingDuration = Date().timeIntervalSince(startTime)
+
+                // Auto-stop at maximum duration
+                if self.recordingDuration >= Self.maximumRecordingDuration {
+                    NotificationCenter.default.post(name: .performToggleRecording, object: nil)
+                }
             }
         }
     }

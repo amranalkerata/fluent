@@ -563,7 +563,7 @@
 				INFOPLIST_FILE = Fluent/Resources/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Fluent;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright 2024. All rights reserved.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright 2026. All rights reserved.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Fluent needs access to your microphone to record voice for transcription.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -595,7 +595,7 @@
 				INFOPLIST_FILE = Fluent/Resources/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Fluent;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright 2024. All rights reserved.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright 2026. All rights reserved.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Fluent needs access to your microphone to record voice for transcription.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

@@ -5,22 +5,34 @@ struct RecordingOverlayView: View {
     @EnvironmentObject var audioService: AudioRecordingService
 
     var body: some View {
-        HStack(spacing: FluentSpacing.sm) {
-            // Pulsing recording indicator
-            Circle()
-                .fill(FluentColors.error)
-                .frame(width: 8, height: 8)
-                .modifier(PulsingModifier(isAnimating: appState.isRecording))
+        Group {
+            if appState.isRecording {
+                // Recording UI
+                HStack(spacing: FluentSpacing.sm) {
+                    Circle()
+                        .fill(FluentColors.error)
+                        .frame(width: 8, height: 8)
+                        .modifier(PulsingModifier(isAnimating: appState.isRecording))
 
-            // Timer
-            Text(formatDuration(audioService.recordingDuration))
-                .font(.Fluent.headlineSmall)
-                .foregroundStyle(FluentColors.textPrimary)
-                .monospacedDigit()
+                    Text(formatDuration(audioService.recordingDuration))
+                        .font(.Fluent.headlineSmall)
+                        .foregroundStyle(FluentColors.textPrimary)
+                        .monospacedDigit()
 
-            // Compact waveform visualization
-            CompactWaveformView(levels: audioService.audioLevels, isRecording: appState.isRecording)
-                .frame(width: 80, height: 24)
+                    CompactWaveformView(levels: audioService.audioLevels, isRecording: appState.isRecording)
+                        .frame(width: 80, height: 24)
+                }
+            } else if appState.isTranscribing {
+                // Processing UI
+                HStack(spacing: FluentSpacing.sm) {
+                    ProgressView()
+                        .scaleEffect(0.8)
+
+                    Text("Processing...")
+                        .font(.Fluent.caption)
+                        .foregroundStyle(FluentColors.textSecondary)
+                }
+            }
         }
         .padding(.horizontal, FluentSpacing.md)
         .padding(.vertical, FluentSpacing.sm)

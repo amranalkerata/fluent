@@ -75,33 +75,22 @@ struct FluentTextField: View {
 struct FluentSecureField: View {
     let placeholder: String
     @Binding var text: String
-    @State private var isRevealed = false
 
     init(_ placeholder: String, text: Binding<String>) {
+        print("[FluentSecureField] init called")
         self.placeholder = placeholder
         self._text = text
+        print("[FluentSecureField] init completed")
     }
 
     var body: some View {
-        HStack(spacing: FluentSpacing.sm) {
+        print("[FluentSecureField] body START")
+        return HStack(spacing: FluentSpacing.sm) {
             Image(systemName: "key")
                 .foregroundStyle(FluentColors.textSecondary)
 
-            if isRevealed {
-                TextField(placeholder, text: $text)
-                    .textFieldStyle(.plain)
-            } else {
-                SecureField(placeholder, text: $text)
-                    .textFieldStyle(.plain)
-            }
-
-            Button {
-                isRevealed.toggle()
-            } label: {
-                Image(systemName: isRevealed ? "eye.slash" : "eye")
-                    .foregroundStyle(FluentColors.textSecondary)
-            }
-            .buttonStyle(.plain)
+            SecureField(placeholder, text: $text)
+                .textFieldStyle(.plain)
         }
         .padding(FluentSpacing.sm)
         .background(
