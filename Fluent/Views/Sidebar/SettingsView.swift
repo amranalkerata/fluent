@@ -290,9 +290,9 @@ struct AboutSettingsCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: FluentSpacing.md) {
             HStack(spacing: FluentSpacing.md) {
-                Image(systemName: "waveform.circle.fill")
-                    .font(.largeTitle)
-                    .foregroundStyle(FluentColors.primary.gradient)
+                Image(nsImage: NSApp.applicationIconImage)
+                    .resizable()
+                    .frame(width: 48, height: 48)
 
                 VStack(alignment: .leading, spacing: FluentSpacing.xxs) {
                     Text("Fluent")
@@ -310,8 +310,28 @@ struct AboutSettingsCard: View {
                 .font(.Fluent.caption)
                 .foregroundStyle(FluentColors.textSecondary)
 
-            HStack(spacing: FluentSpacing.lg) {
-                Link(destination: URL(string: "https://github.com")!) {
+            Text("Developed by Amran Al Kerata")
+                .font(.Fluent.caption)
+                .foregroundStyle(FluentColors.textSecondary)
+
+            HStack(spacing: FluentSpacing.md) {
+                Link(destination: URL(string: "https://kerata.net")!) {
+                    HStack(spacing: FluentSpacing.xs) {
+                        Image(systemName: "globe")
+                        Text("Website")
+                    }
+                    .font(.Fluent.caption)
+                }
+
+                Link(destination: URL(string: "https://www.linkedin.com/in/amran-al-kerata/")!) {
+                    HStack(spacing: FluentSpacing.xs) {
+                        Image(systemName: "person.crop.circle")
+                        Text("LinkedIn")
+                    }
+                    .font(.Fluent.caption)
+                }
+
+                Link(destination: URL(string: "https://github.com/amranalkerata/fluent")!) {
                     HStack(spacing: FluentSpacing.xs) {
                         Image(systemName: "link")
                         Text("GitHub")
@@ -319,7 +339,7 @@ struct AboutSettingsCard: View {
                     .font(.Fluent.caption)
                 }
 
-                Link(destination: URL(string: "https://github.com")!) {
+                Link(destination: URL(string: "https://github.com/amranalkerata/fluent/issues")!) {
                     HStack(spacing: FluentSpacing.xs) {
                         Image(systemName: "exclamationmark.bubble")
                         Text("Report Issue")
