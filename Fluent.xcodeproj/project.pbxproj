@@ -1,0 +1,636 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		001 /* FluentApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 101 /* FluentApp.swift */; };
+		002 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102 /* AppDelegate.swift */; };
+		003 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 103 /* AppState.swift */; };
+		004 /* KeyboardShortcut.swift in Sources */ = {isa = PBXBuildFile; fileRef = 104 /* KeyboardShortcut.swift */; };
+		005 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 105 /* AppSettings.swift */; };
+		006 /* Recording.swift in Sources */ = {isa = PBXBuildFile; fileRef = 106 /* Recording.swift */; };
+		008 /* AudioRecordingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 108 /* AudioRecordingService.swift */; };
+		009 /* TranscriptionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 109 /* TranscriptionService.swift */; };
+		010 /* GPTEnhancementService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 110 /* GPTEnhancementService.swift */; };
+		011 /* HotkeyService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111 /* HotkeyService.swift */; };
+		012 /* KeychainService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 112 /* KeychainService.swift */; };
+		013 /* SettingsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 113 /* SettingsService.swift */; };
+		014 /* PasteService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 114 /* PasteService.swift */; };
+		015 /* PermissionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 115 /* PermissionService.swift */; };
+		016 /* MainWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 116 /* MainWindow.swift */; };
+		017 /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 117 /* SidebarView.swift */; };
+		018 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 118 /* HomeView.swift */; };
+		019 /* HistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 119 /* HistoryView.swift */; };
+		021 /* ShortcutsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 121 /* ShortcutsView.swift */; };
+		022 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 122 /* SettingsView.swift */; };
+		023 /* MenuBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 123 /* MenuBarView.swift */; };
+		024 /* RecordingOverlayWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 124 /* RecordingOverlayWindow.swift */; };
+		025 /* RecordingOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 125 /* RecordingOverlayView.swift */; };
+		026 /* WaveformView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 126 /* WaveformView.swift */; };
+		027 /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 127 /* OnboardingView.swift */; };
+		028 /* Constants.swift in Sources */ = {isa = PBXBuildFile; fileRef = 128 /* Constants.swift */; };
+		029 /* FluentTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 130 /* FluentTheme.swift */; };
+		030 /* FluentTypography.swift in Sources */ = {isa = PBXBuildFile; fileRef = 131 /* FluentTypography.swift */; };
+		031 /* FluentModifiers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 132 /* FluentModifiers.swift */; };
+		032 /* FluentCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 133 /* FluentCard.swift */; };
+		033 /* FluentButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 134 /* FluentButton.swift */; };
+		034 /* FluentFormControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 135 /* FluentFormControls.swift */; };
+		035 /* FluentSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 136 /* FluentSection.swift */; };
+		036 /* FluentListRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 137 /* FluentListRow.swift */; };
+		037 /* FluentEmptyState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 138 /* FluentEmptyState.swift */; };
+		038 /* FluentBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 139 /* FluentBadge.swift */; };
+		039 /* RecordingStorageService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 140 /* RecordingStorageService.swift */; };
+		040 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 141 /* Assets.xcassets */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		101 /* FluentApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FluentApp.swift; sourceTree = "<group>"; };
+		102 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		103 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
+		104 /* KeyboardShortcut.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardShortcut.swift; sourceTree = "<group>"; };
+		105 /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
+		106 /* Recording.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Recording.swift; sourceTree = "<group>"; };
+		108 /* AudioRecordingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRecordingService.swift; sourceTree = "<group>"; };
+		109 /* TranscriptionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptionService.swift; sourceTree = "<group>"; };
+		110 /* GPTEnhancementService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GPTEnhancementService.swift; sourceTree = "<group>"; };
+		111 /* HotkeyService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyService.swift; sourceTree = "<group>"; };
+		112 /* KeychainService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainService.swift; sourceTree = "<group>"; };
+		113 /* SettingsService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsService.swift; sourceTree = "<group>"; };
+		114 /* PasteService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasteService.swift; sourceTree = "<group>"; };
+		115 /* PermissionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionService.swift; sourceTree = "<group>"; };
+		116 /* MainWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainWindow.swift; sourceTree = "<group>"; };
+		117 /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
+		118 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
+		119 /* HistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryView.swift; sourceTree = "<group>"; };
+		121 /* ShortcutsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutsView.swift; sourceTree = "<group>"; };
+		122 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		123 /* MenuBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarView.swift; sourceTree = "<group>"; };
+		124 /* RecordingOverlayWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingOverlayWindow.swift; sourceTree = "<group>"; };
+		125 /* RecordingOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingOverlayView.swift; sourceTree = "<group>"; };
+		126 /* WaveformView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WaveformView.swift; sourceTree = "<group>"; };
+		127 /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
+		128 /* Constants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Constants.swift; sourceTree = "<group>"; };
+		129 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		130 /* FluentTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FluentTheme.swift; sourceTree = "<group>"; };
+		131 /* FluentTypography.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FluentTypography.swift; sourceTree = "<group>"; };
+		132 /* FluentModifiers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FluentModifiers.swift; sourceTree = "<group>"; };
+		133 /* FluentCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FluentCard.swift; sourceTree = "<group>"; };
+		134 /* FluentButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FluentButton.swift; sourceTree = "<group>"; };
+		135 /* FluentFormControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FluentFormControls.swift; sourceTree = "<group>"; };
+		136 /* FluentSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FluentSection.swift; sourceTree = "<group>"; };
+		137 /* FluentListRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FluentListRow.swift; sourceTree = "<group>"; };
+		138 /* FluentEmptyState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FluentEmptyState.swift; sourceTree = "<group>"; };
+		139 /* FluentBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FluentBadge.swift; sourceTree = "<group>"; };
+		140 /* RecordingStorageService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingStorageService.swift; sourceTree = "<group>"; };
+		141 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		15C981DD2F190AE800C28913 /* File.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = File.txt; sourceTree = "<group>"; };
+		900 /* Fluent.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Fluent.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		800 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		000 = {
+			isa = PBXGroup;
+			children = (
+				200 /* Fluent */,
+				901 /* Products */,
+				15C981DD2F190AE800C28913 /* File.txt */,
+			);
+			sourceTree = "<group>";
+		};
+		200 /* Fluent */ = {
+			isa = PBXGroup;
+			children = (
+				201 /* App */,
+				202 /* Models */,
+				203 /* Services */,
+				204 /* Views */,
+				207 /* Theme */,
+				205 /* Utilities */,
+				206 /* Resources */,
+			);
+			path = Fluent;
+			sourceTree = "<group>";
+		};
+		201 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				101 /* FluentApp.swift */,
+				102 /* AppDelegate.swift */,
+				103 /* AppState.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		202 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				104 /* KeyboardShortcut.swift */,
+				105 /* AppSettings.swift */,
+				106 /* Recording.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		203 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				210 /* Audio */,
+				211 /* Transcription */,
+				212 /* Hotkey */,
+				213 /* Storage */,
+				214 /* System */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		204 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				220 /* Main */,
+				221 /* Sidebar */,
+				222 /* MenuBar */,
+				223 /* Overlay */,
+				224 /* Components */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		205 /* Utilities */ = {
+			isa = PBXGroup;
+			children = (
+				128 /* Constants.swift */,
+			);
+			path = Utilities;
+			sourceTree = "<group>";
+		};
+		206 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				141 /* Assets.xcassets */,
+				129 /* Info.plist */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		207 /* Theme */ = {
+			isa = PBXGroup;
+			children = (
+				130 /* FluentTheme.swift */,
+				131 /* FluentTypography.swift */,
+				132 /* FluentModifiers.swift */,
+				208 /* Components */,
+			);
+			path = Theme;
+			sourceTree = "<group>";
+		};
+		208 /* Components */ = {
+			isa = PBXGroup;
+			children = (
+				133 /* FluentCard.swift */,
+				134 /* FluentButton.swift */,
+				135 /* FluentFormControls.swift */,
+				136 /* FluentSection.swift */,
+				137 /* FluentListRow.swift */,
+				138 /* FluentEmptyState.swift */,
+				139 /* FluentBadge.swift */,
+			);
+			path = Components;
+			sourceTree = "<group>";
+		};
+		210 /* Audio */ = {
+			isa = PBXGroup;
+			children = (
+				108 /* AudioRecordingService.swift */,
+			);
+			path = Audio;
+			sourceTree = "<group>";
+		};
+		211 /* Transcription */ = {
+			isa = PBXGroup;
+			children = (
+				109 /* TranscriptionService.swift */,
+				110 /* GPTEnhancementService.swift */,
+			);
+			path = Transcription;
+			sourceTree = "<group>";
+		};
+		212 /* Hotkey */ = {
+			isa = PBXGroup;
+			children = (
+				111 /* HotkeyService.swift */,
+			);
+			path = Hotkey;
+			sourceTree = "<group>";
+		};
+		213 /* Storage */ = {
+			isa = PBXGroup;
+			children = (
+				112 /* KeychainService.swift */,
+				140 /* RecordingStorageService.swift */,
+				113 /* SettingsService.swift */,
+			);
+			path = Storage;
+			sourceTree = "<group>";
+		};
+		214 /* System */ = {
+			isa = PBXGroup;
+			children = (
+				114 /* PasteService.swift */,
+				115 /* PermissionService.swift */,
+			);
+			path = System;
+			sourceTree = "<group>";
+		};
+		220 /* Main */ = {
+			isa = PBXGroup;
+			children = (
+				116 /* MainWindow.swift */,
+				117 /* SidebarView.swift */,
+			);
+			path = Main;
+			sourceTree = "<group>";
+		};
+		221 /* Sidebar */ = {
+			isa = PBXGroup;
+			children = (
+				118 /* HomeView.swift */,
+				119 /* HistoryView.swift */,
+				121 /* ShortcutsView.swift */,
+				122 /* SettingsView.swift */,
+			);
+			path = Sidebar;
+			sourceTree = "<group>";
+		};
+		222 /* MenuBar */ = {
+			isa = PBXGroup;
+			children = (
+				123 /* MenuBarView.swift */,
+			);
+			path = MenuBar;
+			sourceTree = "<group>";
+		};
+		223 /* Overlay */ = {
+			isa = PBXGroup;
+			children = (
+				124 /* RecordingOverlayWindow.swift */,
+				125 /* RecordingOverlayView.swift */,
+				126 /* WaveformView.swift */,
+			);
+			path = Overlay;
+			sourceTree = "<group>";
+		};
+		224 /* Components */ = {
+			isa = PBXGroup;
+			children = (
+				127 /* OnboardingView.swift */,
+			);
+			path = Components;
+			sourceTree = "<group>";
+		};
+		901 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				900 /* Fluent.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		700 /* Fluent */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 703 /* Build configuration list for PBXNativeTarget "Fluent" */;
+			buildPhases = (
+				701 /* Sources */,
+				800 /* Frameworks */,
+				702 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Fluent;
+			productName = Fluent;
+			productReference = 900 /* Fluent.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		600 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 2620;
+				TargetAttributes = {
+					700 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = 601 /* Build configuration list for PBXProject "Fluent" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 000;
+			productRefGroup = 901 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				700 /* Fluent */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		702 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				040 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		701 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				001 /* FluentApp.swift in Sources */,
+				002 /* AppDelegate.swift in Sources */,
+				003 /* AppState.swift in Sources */,
+				004 /* KeyboardShortcut.swift in Sources */,
+				005 /* AppSettings.swift in Sources */,
+				006 /* Recording.swift in Sources */,
+				008 /* AudioRecordingService.swift in Sources */,
+				009 /* TranscriptionService.swift in Sources */,
+				010 /* GPTEnhancementService.swift in Sources */,
+				011 /* HotkeyService.swift in Sources */,
+				012 /* KeychainService.swift in Sources */,
+				039 /* RecordingStorageService.swift in Sources */,
+				013 /* SettingsService.swift in Sources */,
+				014 /* PasteService.swift in Sources */,
+				015 /* PermissionService.swift in Sources */,
+				016 /* MainWindow.swift in Sources */,
+				017 /* SidebarView.swift in Sources */,
+				018 /* HomeView.swift in Sources */,
+				019 /* HistoryView.swift in Sources */,
+				021 /* ShortcutsView.swift in Sources */,
+				022 /* SettingsView.swift in Sources */,
+				023 /* MenuBarView.swift in Sources */,
+				024 /* RecordingOverlayWindow.swift in Sources */,
+				025 /* RecordingOverlayView.swift in Sources */,
+				026 /* WaveformView.swift in Sources */,
+				027 /* OnboardingView.swift in Sources */,
+				028 /* Constants.swift in Sources */,
+				029 /* FluentTheme.swift in Sources */,
+				030 /* FluentTypography.swift in Sources */,
+				031 /* FluentModifiers.swift in Sources */,
+				032 /* FluentCard.swift in Sources */,
+				033 /* FluentButton.swift in Sources */,
+				034 /* FluentFormControls.swift in Sources */,
+				035 /* FluentSection.swift in Sources */,
+				036 /* FluentListRow.swift in Sources */,
+				037 /* FluentEmptyState.swift in Sources */,
+				038 /* FluentBadge.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		602 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 2A7AL8SKNZ;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		603 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 2A7AL8SKNZ;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		704 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Fluent/Fluent.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Fluent/Resources/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Fluent;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright 2024. All rights reserved.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Fluent needs access to your microphone to record voice for transcription.";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.fluent.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		705 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Fluent/Fluent.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Fluent/Resources/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Fluent;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright 2024. All rights reserved.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Fluent needs access to your microphone to record voice for transcription.";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.fluent.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		601 /* Build configuration list for PBXProject "Fluent" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				602 /* Debug */,
+				603 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		703 /* Build configuration list for PBXNativeTarget "Fluent" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				704 /* Debug */,
+				705 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 600 /* Project object */;
+}
