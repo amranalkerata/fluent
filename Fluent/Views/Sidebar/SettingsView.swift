@@ -172,14 +172,6 @@ struct BehaviorSettingsCard: View {
             FluentDivider(inset: true)
 
             FluentToggle(
-                title: "Completion Sound",
-                description: "Play sound when transcription completes",
-                isOn: $settingsService.settings.playCompletionSound
-            )
-
-            FluentDivider(inset: true)
-
-            FluentToggle(
                 title: "Launch at Login",
                 description: "Start Fluent when you log in",
                 isOn: Binding(

@@ -8,7 +8,6 @@ struct AppSettings: Codable, Equatable {
 
     // MARK: - Behavior Settings
     var autoPasteEnabled: Bool = true
-    var playCompletionSound: Bool = true
     var showRecordingOverlay: Bool = true
     var launchAtLogin: Bool = false
 

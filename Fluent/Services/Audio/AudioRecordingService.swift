@@ -50,6 +50,10 @@ class AudioRecordingService: ObservableObject {
 
     private let maxLevelSamples = 100
 
+    // Track audio levels during recording for silence detection
+    private var allLevelSamples: [Float] = []
+    private static let silenceThreshold: Float = 0.05
+
     init() {
         setupLevelSmoothing()
     }
@@ -136,6 +140,9 @@ class AudioRecordingService: ObservableObject {
             // Calculate RMS level for waveform
             let level = self.calculateRMSLevel(buffer: buffer)
             self.levelPublisher.send(level)
+
+            // Collect levels for silence detection
+            self.allLevelSamples.append(level)
         }
 
         // Start engine
@@ -150,6 +157,7 @@ class AudioRecordingService: ObservableObject {
         self.isRecording = true
         self.recordingStartTime = Date()
         self.audioLevels.removeAll()
+        self.allLevelSamples.removeAll()
         startDurationTimer()
     }
 
@@ -191,6 +199,19 @@ class AudioRecordingService: ObservableObject {
 
     static func requestMicrophonePermission() async -> Bool {
         await AVCaptureDevice.requestAccess(for: .audio)
+    }
+
+    // MARK: - Silence Detection
+
+    /// Returns the average audio level from the recording session
+    func getAverageLevel() -> Float {
+        guard !allLevelSamples.isEmpty else { return 0 }
+        return allLevelSamples.reduce(0, +) / Float(allLevelSamples.count)
+    }
+
+    /// Checks if the recording has sufficient audio activity (not just silence)
+    func hasSpeechActivity() -> Bool {
+        return getAverageLevel() >= Self.silenceThreshold
     }
 
     // MARK: - Audio Level Calculation

@@ -108,9 +108,10 @@ struct OnboardingView: View {
 struct WelcomeStep: View {
     var body: some View {
         VStack(spacing: FluentSpacing.lg) {
-            Image(systemName: "waveform.circle.fill")
-                .font(.system(size: 72))
-                .foregroundStyle(FluentColors.primary.gradient)
+            Image(nsImage: NSApp.applicationIconImage)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 72, height: 72)
 
             VStack(spacing: FluentSpacing.sm) {
                 Text("Welcome to Fluent")

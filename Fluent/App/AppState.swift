@@ -109,6 +109,7 @@ class AppState: ObservableObject {
         Task {
             do {
                 try await audioService.startRecording()
+                SoundService.shared.playRecordingSound()
                 // Show overlay
                 NotificationCenter.default.post(name: .showRecordingOverlay, object: self)
             } catch {
@@ -135,6 +136,7 @@ class AppState: ObservableObject {
             let duration = recordingDuration
 
             recordingURL = await audioService.stopRecording()
+            SoundService.shared.playRecordingSound()
             // Don't hide overlay yet - let it show processing state
 
             if let url = recordingURL {
@@ -142,6 +144,16 @@ class AppState: ObservableObject {
                 if duration < AudioRecordingService.minimumRecordingDuration {
                     audioService.deleteRecording(at: url)
                     transcriptionError = RecordingError.recordingTooShort.localizedDescription
+                    NotificationCenter.default.post(name: .hideRecordingOverlay, object: nil)
+                    isStoppingRecording = false
+                    workflowInProgress = false
+                    return
+                }
+
+                // Check for speech activity before sending to Whisper (prevents hallucinations on silence)
+                if !audioService.hasSpeechActivity() {
+                    audioService.deleteRecording(at: url)
+                    transcriptionError = RecordingError.noSpeechDetected.localizedDescription
                     NotificationCenter.default.post(name: .hideRecordingOverlay, object: nil)
                     isStoppingRecording = false
                     workflowInProgress = false
@@ -241,11 +253,6 @@ class AppState: ObservableObject {
                 )
             } catch {
                 print("Failed to save recording to history: \(error)")
-            }
-
-            // Play completion sound if enabled
-            if settingsService.settings.playCompletionSound {
-                NSSound.beep()
             }
 
         } catch {

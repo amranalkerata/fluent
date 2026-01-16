@@ -33,6 +33,32 @@ class TranscriptionService {
     private let keychainService = KeychainService.shared
     private let settingsService = SettingsService.shared
 
+    // Known Whisper hallucination phrases (lowercased for comparison)
+    private let hallucinationPhrases: Set<String> = [
+        "thank you for watching",
+        "thanks for watching",
+        "please subscribe",
+        "subscribe",
+        "like and subscribe",
+        "see you next time",
+        "see you in the next video",
+        "bye",
+        "goodbye",
+        "bye bye",
+        "thank you",
+        "thanks",
+        "...",
+        "…",
+        "you"
+    ]
+
+    /// Checks if the transcription is likely a Whisper hallucination
+    private func isHallucination(_ text: String) -> Bool {
+        let normalized = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        // Check for known hallucination phrases or very short text
+        return hallucinationPhrases.contains(normalized) || normalized.count < 2
+    }
+
     func transcribe(audioURL: URL) async throws -> String {
         // Get API key
         guard let apiKey = keychainService.getAPIKey() else {
@@ -83,6 +109,11 @@ class TranscriptionService {
         body.append("Content-Disposition: form-data; name=\"response_format\"\r\n\r\n".data(using: .utf8)!)
         body.append("text\r\n".data(using: .utf8)!)
 
+        // Add temperature=0 for more deterministic (less hallucinatory) output
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"temperature\"\r\n\r\n".data(using: .utf8)!)
+        body.append("0\r\n".data(using: .utf8)!)
+
         // Close boundary
         body.append("--\(boundary)--\r\n".data(using: .utf8)!)
 
@@ -127,6 +158,12 @@ class TranscriptionService {
         let result = transcription.trimmingCharacters(in: .whitespacesAndNewlines)
         print("[Whisper Debug] Final transcription: '\(result)'")
         print("[Whisper Debug] Transcription length: \(result.count)")
+
+        // Filter out known hallucinations
+        if isHallucination(result) {
+            print("[Whisper Debug] Detected hallucination, returning empty")
+            return ""
+        }
 
         return result
     }

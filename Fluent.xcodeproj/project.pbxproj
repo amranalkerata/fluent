@@ -45,6 +45,8 @@
 		038 /* FluentBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 139 /* FluentBadge.swift */; };
 		039 /* RecordingStorageService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 140 /* RecordingStorageService.swift */; };
 		040 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 141 /* Assets.xcassets */; };
+		041 /* SoundService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 142 /* SoundService.swift */; };
+		042 /* sound.m4a in Resources */ = {isa = PBXBuildFile; fileRef = 143 /* sound.m4a */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -87,6 +89,8 @@
 		139 /* FluentBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FluentBadge.swift; sourceTree = "<group>"; };
 		140 /* RecordingStorageService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingStorageService.swift; sourceTree = "<group>"; };
 		141 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		142 /* SoundService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SoundService.swift; sourceTree = "<group>"; };
+		143 /* sound.m4a */ = {isa = PBXFileReference; lastKnownFileType = audio.m4a; path = sound.m4a; sourceTree = "<group>"; };
 		15C981DD2F190AE800C28913 /* File.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = File.txt; sourceTree = "<group>"; };
 		900 /* Fluent.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Fluent.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -182,6 +186,7 @@
 			children = (
 				141 /* Assets.xcassets */,
 				129 /* Info.plist */,
+				143 /* sound.m4a */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -215,6 +220,7 @@
 			isa = PBXGroup;
 			children = (
 				108 /* AudioRecordingService.swift */,
+				142 /* SoundService.swift */,
 			);
 			path = Audio;
 			sourceTree = "<group>";
@@ -368,6 +374,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				040 /* Assets.xcassets in Resources */,
+				042 /* sound.m4a in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -415,6 +422,7 @@
 				036 /* FluentListRow.swift in Sources */,
 				037 /* FluentEmptyState.swift in Sources */,
 				038 /* FluentBadge.swift in Sources */,
+				041 /* SoundService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
