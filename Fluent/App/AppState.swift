@@ -86,7 +86,6 @@ class AppState: ObservableObject {
         } else {
             // Prevent starting new recording while workflow is in progress
             guard !workflowInProgress else {
-                print("Workflow in progress, ignoring start request")
                 return
             }
             startRecording()
@@ -95,11 +94,9 @@ class AppState: ObservableObject {
 
     func startRecording() {
         guard !isRecording else {
-            print("Already recording, ignoring start request")
             return
         }
         guard !workflowInProgress else {
-            print("Workflow in progress, ignoring start request")
             return
         }
 
@@ -121,11 +118,9 @@ class AppState: ObservableObject {
 
     func stopRecording() {
         guard isRecording else {
-            print("Not recording, ignoring stop request")
             return
         }
         guard !isStoppingRecording else {
-            print("Already stopping recording, ignoring duplicate request")
             return
         }
 
@@ -186,7 +181,6 @@ class AppState: ObservableObject {
 
     private func transcribeRecording(url: URL) async {
         guard !isTranscribing else {
-            print("Already transcribing, ignoring duplicate request")
             // Reset flags and hide overlay since we're not proceeding
             NotificationCenter.default.post(name: .hideRecordingOverlay, object: nil)
             isStoppingRecording = false
@@ -252,7 +246,7 @@ class AppState: ObservableObject {
                     targetApplication: targetApp
                 )
             } catch {
-                print("Failed to save recording to history: \(error)")
+                // Silently handle storage errors
             }
 
         } catch {
@@ -278,6 +272,9 @@ class AppState: ObservableObject {
     }
 
     func openMainWindow() {
+        // Restore Dock presence before showing window (if hidden)
+        AppDelegate.shared?.restoreDockPresence()
+
         NSApp.activate(ignoringOtherApps: true)
         if let window = NSApp.windows.first(where: { $0.identifier?.rawValue == "main" }) {
             window.makeKeyAndOrderFront(nil)

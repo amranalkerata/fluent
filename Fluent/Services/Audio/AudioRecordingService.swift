@@ -134,7 +134,7 @@ class AudioRecordingService: ObservableObject {
             do {
                 try self.audioFile?.write(from: buffer)
             } catch {
-                print("Error writing audio buffer: \(error)")
+                // Silently handle buffer write errors
             }
 
             // Calculate RMS level for waveform

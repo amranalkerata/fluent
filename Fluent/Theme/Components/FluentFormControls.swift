@@ -77,15 +77,12 @@ struct FluentSecureField: View {
     @Binding var text: String
 
     init(_ placeholder: String, text: Binding<String>) {
-        print("[FluentSecureField] init called")
         self.placeholder = placeholder
         self._text = text
-        print("[FluentSecureField] init completed")
     }
 
     var body: some View {
-        print("[FluentSecureField] body START")
-        return HStack(spacing: FluentSpacing.sm) {
+        HStack(spacing: FluentSpacing.sm) {
             Image(systemName: "key")
                 .foregroundStyle(FluentColors.textSecondary)
 

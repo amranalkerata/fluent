@@ -107,16 +107,15 @@ class HotkeyService: ObservableObject {
 
     private func triggerAction(_ action: ShortcutAction) {
         let now = Date()
-        
+
         // Debounce to prevent multiple triggers of the same action
         if let lastTrigger = lastActionTriggerTime[action],
            now.timeIntervalSince(lastTrigger) < actionDebounceInterval {
-            print("Debounced action trigger for \(action)")
             return
         }
-        
+
         lastActionTriggerTime[action] = now
-        
+
         DispatchQueue.main.async {
             NotificationCenter.default.post(name: .shortcutTriggered, object: action)
         }

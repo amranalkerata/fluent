@@ -7,6 +7,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     private var runLoopSource: CFRunLoopSource?
     private var recordingOverlayWindow: RecordingOverlayWindow?
     private var cancellables = Set<AnyCancellable>()
+    private let settingsService = SettingsService.shared
 
     // Singleton for access from event tap callback
     static var shared: AppDelegate?
@@ -18,6 +19,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupNotificationObservers()
+        setupWindowObservers()
         checkAndRequestInputMonitoringPermission()
     }
 
@@ -56,6 +58,34 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     private func handleToggleRecording() {
         // Post to AppState to handle the actual toggle
         NotificationCenter.default.post(name: .performToggleRecording, object: nil)
+    }
+
+    // MARK: - Window Observers (Remove from Dock)
+
+    private func setupWindowObservers() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleMainWindowClose(_:)),
+            name: NSWindow.willCloseNotification,
+            object: nil
+        )
+    }
+
+    @objc private func handleMainWindowClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow,
+              window.identifier?.rawValue == "main" else { return }
+
+        // Hide from Dock if setting is enabled
+        if settingsService.settings.removeFromDockOnClose {
+            NSApp.setActivationPolicy(.accessory)
+        }
+    }
+
+    /// Restores the app to regular Dock mode (called before opening main window)
+    func restoreDockPresence() {
+        if NSApp.activationPolicy() == .accessory {
+            NSApp.setActivationPolicy(.regular)
+        }
     }
 
     // MARK: - Input Monitoring Permission
@@ -103,7 +133,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             },
             userInfo: nil
         ) else {
-            print("Failed to create event tap - check Input Monitoring permission in System Settings")
             return
         }
 
@@ -111,8 +140,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         self.runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
-
-        print("Global event tap enabled successfully")
     }
 
     private func disableEventTap() {

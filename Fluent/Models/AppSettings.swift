@@ -10,6 +10,7 @@ struct AppSettings: Codable, Equatable {
     var autoPasteEnabled: Bool = true
     var showRecordingOverlay: Bool = true
     var launchAtLogin: Bool = false
+    var removeFromDockOnClose: Bool = false
 
     // MARK: - Overlay Settings
     var overlayPosition: OverlayPosition = .bottomCenter

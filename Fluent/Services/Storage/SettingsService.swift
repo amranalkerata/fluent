@@ -30,7 +30,6 @@ class SettingsService: ObservableObject {
         do {
             return try JSONDecoder().decode(AppSettings.self, from: data)
         } catch {
-            print("Failed to decode settings: \(error)")
             return nil
         }
     }
@@ -40,7 +39,7 @@ class SettingsService: ObservableObject {
             let data = try JSONEncoder().encode(settings)
             UserDefaults.standard.set(data, forKey: settingsKey)
         } catch {
-            print("Failed to encode settings: \(error)")
+            // Silently handle encoding errors
         }
     }
 
@@ -54,7 +53,6 @@ class SettingsService: ObservableObject {
         do {
             return try JSONDecoder().decode(ShortcutConfiguration.self, from: data)
         } catch {
-            print("Failed to decode shortcuts: \(error)")
             return nil
         }
     }
@@ -64,7 +62,7 @@ class SettingsService: ObservableObject {
             let data = try JSONEncoder().encode(config)
             UserDefaults.standard.set(data, forKey: shortcutsKey)
         } catch {
-            print("Failed to encode shortcuts: \(error)")
+            // Silently handle encoding errors
         }
     }
 
@@ -91,7 +89,7 @@ class SettingsService: ObservableObject {
             }
             settings.launchAtLogin = enabled
         } catch {
-            print("Failed to set launch at login: \(error)")
+            // Silently handle launch at login errors
         }
     }
 

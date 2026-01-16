@@ -179,6 +179,14 @@ struct BehaviorSettingsCard: View {
                     set: { settingsService.setLaunchAtLogin($0) }
                 )
             )
+
+            FluentDivider(inset: true)
+
+            FluentToggle(
+                title: "Remove from Dock when closed",
+                description: "Hide from Dock when window closes. Access via menu bar.",
+                isOn: $settingsService.settings.removeFromDockOnClose
+            )
         }
     }
 }

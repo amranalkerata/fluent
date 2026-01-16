@@ -7,9 +7,7 @@ class KeychainService {
     private let serviceName = "com.fluent.api"
     private let apiKeyAccount = "openai-api-key"
 
-    private init() {
-        print("[KeychainService] init called")
-    }
+    private init() {}
 
     // MARK: - API Key Management
 
@@ -32,7 +30,6 @@ class KeychainService {
     }
 
     func getAPIKey() -> String? {
-        print("[KeychainService] getAPIKey called")
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: serviceName,
@@ -41,19 +38,15 @@ class KeychainService {
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
 
-        print("[KeychainService] About to call SecItemCopyMatching")
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
-        print("[KeychainService] SecItemCopyMatching returned status: \(status)")
 
         guard status == errSecSuccess,
               let data = result as? Data,
               let apiKey = String(data: data, encoding: .utf8) else {
-            print("[KeychainService] getAPIKey returning nil")
             return nil
         }
 
-        print("[KeychainService] getAPIKey returning key")
         return apiKey
     }
 
@@ -70,10 +63,7 @@ class KeychainService {
     }
 
     func hasAPIKey() -> Bool {
-        print("[KeychainService] hasAPIKey called")
-        let result = getAPIKey() != nil
-        print("[KeychainService] hasAPIKey returning: \(result)")
-        return result
+        return getAPIKey() != nil
     }
 
     // MARK: - API Key Validation

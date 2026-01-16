@@ -132,10 +132,6 @@ class TranscriptionService {
             throw TranscriptionError.invalidResponse
         }
 
-        // Debug logging
-        print("[Whisper Debug] Status: \(httpResponse.statusCode)")
-        print("[Whisper Debug] Raw response: \(String(data: data, encoding: .utf8) ?? "nil")")
-
         if httpResponse.statusCode == 401 {
             throw TranscriptionError.invalidAPIKey
         }
@@ -156,12 +152,9 @@ class TranscriptionService {
         }
 
         let result = transcription.trimmingCharacters(in: .whitespacesAndNewlines)
-        print("[Whisper Debug] Final transcription: '\(result)'")
-        print("[Whisper Debug] Transcription length: \(result.count)")
 
         // Filter out known hallucinations
         if isHallucination(result) {
-            print("[Whisper Debug] Detected hallucination, returning empty")
             return ""
         }
 
@@ -170,22 +163,16 @@ class TranscriptionService {
 
     // Test API key validity
     func testAPIKey(_ apiKey: String) async -> Bool {
-        print("[testAPIKey] START")
         var request = URLRequest(url: URL(string: "https://api.openai.com/v1/models")!)
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
 
         do {
-            print("[testAPIKey] About to make network request")
             let (_, response) = try await URLSession.shared.data(for: request)
-            print("[testAPIKey] Network request completed")
             guard let httpResponse = response as? HTTPURLResponse else {
-                print("[testAPIKey] Invalid response type")
                 return false
             }
-            print("[testAPIKey] Status code: \(httpResponse.statusCode)")
             return httpResponse.statusCode == 200
         } catch {
-            print("[testAPIKey] Error: \(error)")
             return false
         }
     }

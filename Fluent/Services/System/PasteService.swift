@@ -16,33 +16,29 @@ class PasteService {
         let now = Date()
         if let lastPaste = lastPasteTime,
            now.timeIntervalSince(lastPaste) < pasteDebounceInterval {
-            print("Paste debounced - too soon since last paste")
             return
         }
-        
+
         guard !isPasting else {
-            print("Paste already in progress, ignoring")
             return
         }
-        
+
         guard !text.isEmpty else {
-            print("Cannot paste empty text")
             return
         }
-        
+
         isPasting = true
         lastPasteTime = now
-        
+
         // 1. Save old clipboard content (to restore if paste fails)
         let pasteboard = NSPasteboard.general
         let oldContent = pasteboard.string(forType: .string)
-        
+
         // 2. Clear and set new content
         pasteboard.clearContents()
         let success = pasteboard.setString(text, forType: .string)
-        
+
         guard success else {
-            print("Failed to set clipboard content")
             isPasting = false
             return
         }
@@ -55,11 +51,11 @@ class PasteService {
             isPasting = false
         }
     }
-    
+
     /// Verify clipboard contains expected text before pasting
     private func verifyClipboardAndPaste(expectedText: String, oldContent: String?, retries: Int) {
         let pasteboard = NSPasteboard.general
-        
+
         // Check if clipboard has the expected content
         if let currentContent = pasteboard.string(forType: .string),
            currentContent == expectedText {
@@ -73,13 +69,11 @@ class PasteService {
             }
         } else if retries > 0 {
             // Retry after a short delay
-            print("Clipboard verification failed, retrying... (\(retries) left)")
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
                 self?.verifyClipboardAndPaste(expectedText: expectedText, oldContent: oldContent, retries: retries - 1)
             }
         } else {
             // Failed after all retries - restore old clipboard content
-            print("Failed to verify clipboard after all retries")
             if let old = oldContent {
                 pasteboard.clearContents()
                 pasteboard.setString(old, forType: .string)
@@ -98,7 +92,6 @@ class PasteService {
     /// Simulate Cmd+V keystroke to paste
     private func simulatePaste() {
         guard let source = CGEventSource(stateID: .hidSystemState) else {
-            print("Failed to create event source for paste simulation")
             return
         }
 
@@ -108,7 +101,6 @@ class PasteService {
         // Create key down event with Command modifier
         guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: vKeyCode, keyDown: true),
               let keyUp = CGEvent(keyboardEventSource: source, virtualKey: vKeyCode, keyDown: false) else {
-            print("Failed to create keyboard events for paste simulation")
             return
         }
 
