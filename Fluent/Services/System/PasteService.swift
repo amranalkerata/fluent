@@ -62,8 +62,13 @@ class PasteService {
             // Clipboard is correct, proceed with paste
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
                 self?.simulatePaste()
-                // Reset paste lock after paste completes
+                // Restore old clipboard and reset paste lock after paste completes
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    if let old = oldContent {
+                        let pasteboard = NSPasteboard.general
+                        pasteboard.clearContents()
+                        pasteboard.setString(old, forType: .string)
+                    }
                     self?.isPasting = false
                 }
             }

@@ -10,6 +10,7 @@ enum ShortcutAction: String, Codable, CaseIterable, Identifiable {
     case stopRecording = "stop_recording"
     case cancelRecording = "cancel_recording"
     case openMainWindow = "open_main_window"
+    case pasteLastTranscript = "paste_last_transcript"
 
     var id: String { rawValue }
 
@@ -20,6 +21,7 @@ enum ShortcutAction: String, Codable, CaseIterable, Identifiable {
         case .stopRecording: return "Stop Recording"
         case .cancelRecording: return "Cancel Recording"
         case .openMainWindow: return "Open Main Window"
+        case .pasteLastTranscript: return "Paste Last Transcript"
         }
     }
 
@@ -30,6 +32,7 @@ enum ShortcutAction: String, Codable, CaseIterable, Identifiable {
         case .stopRecording: return "Stop current recording and transcribe"
         case .cancelRecording: return "Cancel recording without transcribing"
         case .openMainWindow: return "Bring Fluent window to front"
+        case .pasteLastTranscript: return "Paste last transcription into focused app"
         }
     }
 }
@@ -165,6 +168,12 @@ struct ShortcutConfiguration: Codable {
             ShortcutAction.toggleRecording.rawValue: [
                 .fnKey,
                 .optionSpace
+            ],
+            ShortcutAction.pasteLastTranscript.rawValue: [
+                KeyboardShortcut(
+                    keyCode: UInt16(kVK_ANSI_V),
+                    modifiers: CGEventFlags([.maskAlternate, .maskShift]).rawValue
+                )
             ]
         ]
         return config

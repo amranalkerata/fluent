@@ -56,6 +56,16 @@ struct MenuBarView: View {
                     }
                 }
 
+                if appState.lastTranscription != nil {
+                    MenuBarButton(
+                        title: "Paste Last Transcript",
+                        icon: "doc.on.clipboard",
+                        shortcut: "⌥⇧V"
+                    ) {
+                        appState.pasteLastTranscript()
+                    }
+                }
+
                 Divider()
                     .padding(.vertical, 4)
 

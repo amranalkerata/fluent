@@ -261,8 +261,8 @@ class AppState: ObservableObject {
             // Determine target application for paste
             var targetApp: String? = nil
 
-            // Auto-paste if enabled (only if we have text and weren't cancelled)
-            if settingsService.settings.autoPasteEnabled && !result.isEmpty {
+            // Auto-paste (only if we have text and weren't cancelled)
+            if !result.isEmpty {
                 targetApp = NSWorkspace.shared.frontmostApplication?.localizedName
                 PasteService.shared.pasteText(result)
             }
@@ -274,7 +274,7 @@ class AppState: ObservableObject {
                     audioFileName: nil,  // Audio file is deleted after transcription
                     originalTranscription: result,
                     enhancedTranscription: nil,  // No GPT enhancement anymore
-                    isPasted: settingsService.settings.autoPasteEnabled && !result.isEmpty,
+                    isPasted: !result.isEmpty,
                     targetApplication: targetApp
                 )
             } catch {
@@ -300,6 +300,8 @@ class AppState: ObservableObject {
             cancelRecording()
         case .openMainWindow:
             openMainWindow()
+        case .pasteLastTranscript:
+            pasteLastTranscript()
         }
     }
 
@@ -311,6 +313,11 @@ class AppState: ObservableObject {
         if let window = NSApp.windows.first(where: { $0.identifier?.rawValue == "main" }) {
             window.makeKeyAndOrderFront(nil)
         }
+    }
+
+    func pasteLastTranscript() {
+        guard let text = lastTranscription, !text.isEmpty else { return }
+        PasteService.shared.pasteText(text)
     }
 }
 
