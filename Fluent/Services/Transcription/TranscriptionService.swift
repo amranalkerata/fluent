@@ -1,36 +1,29 @@
 import Foundation
 
 enum TranscriptionError: LocalizedError {
-    case noAPIKey
-    case invalidAPIKey
-    case fileTooLarge
-    case networkError(Error)
-    case apiError(String)
-    case invalidResponse
+    case modelNotReady
+    case audioConversionFailed(String)
+    case transcriptionFailed(String)
+    case fileNotFound
+    case emptyTranscription
 
     var errorDescription: String? {
         switch self {
-        case .noAPIKey:
-            return "No API key configured. Please add your OpenAI API key in Settings."
-        case .invalidAPIKey:
-            return "Invalid API key. Please check your OpenAI API key in Settings."
-        case .fileTooLarge:
-            return "Audio file is too large. Maximum size is 25MB."
-        case .networkError(let error):
-            return "Network error: \(error.localizedDescription)"
-        case .apiError(let message):
-            return "API error: \(message)"
-        case .invalidResponse:
-            return "Invalid response from API."
+        case .modelNotReady:
+            return "Whisper model is not ready. Please download the model first."
+        case .audioConversionFailed(let reason):
+            return "Failed to convert audio: \(reason)"
+        case .transcriptionFailed(let reason):
+            return "Transcription failed: \(reason)"
+        case .fileNotFound:
+            return "Audio file not found."
+        case .emptyTranscription:
+            return "No speech detected in the recording."
         }
     }
 }
 
 class TranscriptionService {
-    private let whisperEndpoint = "https://api.openai.com/v1/audio/transcriptions"
-    private let maxFileSize: Int64 = 25 * 1024 * 1024 // 25MB
-
-    private let keychainService = KeychainService.shared
     private let settingsService = SettingsService.shared
 
     // Known Whisper hallucination phrases (lowercased for comparison)
@@ -49,7 +42,13 @@ class TranscriptionService {
         "thanks",
         "...",
         "…",
-        "you"
+        "you",
+        "[music]",
+        "[applause]",
+        "(music)",
+        "(applause)",
+        "[silence]",
+        "(silence)"
     ]
 
     /// Checks if the transcription is likely a Whisper hallucination
@@ -60,120 +59,73 @@ class TranscriptionService {
     }
 
     func transcribe(audioURL: URL) async throws -> String {
-        // Get API key
-        guard let apiKey = keychainService.getAPIKey() else {
-            throw TranscriptionError.noAPIKey
+        // Check model is ready
+        let modelManager = await ModelManager.shared
+        guard await modelManager.state.isReady else {
+            throw TranscriptionError.modelNotReady
         }
 
-        // Check file size
-        let fileAttributes = try FileManager.default.attributesOfItem(atPath: audioURL.path)
-        if let fileSize = fileAttributes[.size] as? Int64, fileSize > maxFileSize {
-            throw TranscriptionError.fileTooLarge
+        // Check file exists
+        guard FileManager.default.fileExists(atPath: audioURL.path) else {
+            throw TranscriptionError.fileNotFound
         }
 
-        // Read audio data
-        let audioData = try Data(contentsOf: audioURL)
-
-        // Create multipart form request
-        let boundary = UUID().uuidString
-        var request = URLRequest(url: URL(string: whisperEndpoint)!)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-
-        // Build form body
-        var body = Data()
-
-        // Add file
-        body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(audioURL.lastPathComponent)\"\r\n".data(using: .utf8)!)
-        body.append("Content-Type: audio/m4a\r\n\r\n".data(using: .utf8)!)
-        body.append(audioData)
-        body.append("\r\n".data(using: .utf8)!)
-
-        // Add model
-        body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"model\"\r\n\r\n".data(using: .utf8)!)
-        body.append("\(settingsService.settings.whisperModel.rawValue)\r\n".data(using: .utf8)!)
-
-        // Add language if specified
-        let language = settingsService.settings.language.rawValue
-        if !language.isEmpty {
-            body.append("--\(boundary)\r\n".data(using: .utf8)!)
-            body.append("Content-Disposition: form-data; name=\"language\"\r\n\r\n".data(using: .utf8)!)
-            body.append("\(language)\r\n".data(using: .utf8)!)
-        }
-
-        // Add response format
-        body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"response_format\"\r\n\r\n".data(using: .utf8)!)
-        body.append("text\r\n".data(using: .utf8)!)
-
-        // Add temperature=0 for more deterministic (less hallucinatory) output
-        body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"temperature\"\r\n\r\n".data(using: .utf8)!)
-        body.append("0\r\n".data(using: .utf8)!)
-
-        // Close boundary
-        body.append("--\(boundary)--\r\n".data(using: .utf8)!)
-
-        request.httpBody = body
-
-        // Make request
-        let (data, response): (Data, URLResponse)
+        // Convert audio to whisper format (16kHz mono PCM)
+        let samples: [Float]
         do {
-            (data, response) = try await URLSession.shared.data(for: request)
+            samples = try await AudioConverter.convertToWhisperSamples(url: audioURL)
         } catch {
-            throw TranscriptionError.networkError(error)
+            throw TranscriptionError.audioConversionFailed(error.localizedDescription)
         }
 
-        // Check response
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw TranscriptionError.invalidResponse
+        // Check we have enough audio data
+        let durationSeconds = Double(samples.count) / AudioConverter.targetSampleRate
+        guard durationSeconds >= 0.5 else {
+            throw TranscriptionError.emptyTranscription
         }
 
-        if httpResponse.statusCode == 401 {
-            throw TranscriptionError.invalidAPIKey
+        // Get language setting
+        let language = settingsService.settings.language.rawValue
+        let languageCode: String? = language.isEmpty ? nil : language
+
+        // Transcribe
+        let result: String
+        do {
+            result = try await modelManager.transcribe(samples: samples, language: languageCode)
+        } catch {
+            throw TranscriptionError.transcriptionFailed(error.localizedDescription)
         }
 
-        if httpResponse.statusCode != 200 {
-            // Try to parse error message
-            if let errorJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let error = errorJson["error"] as? [String: Any],
-               let message = error["message"] as? String {
-                throw TranscriptionError.apiError(message)
-            }
-            throw TranscriptionError.apiError("HTTP \(httpResponse.statusCode)")
-        }
-
-        // Parse response (plain text for "text" format)
-        guard let transcription = String(data: data, encoding: .utf8) else {
-            throw TranscriptionError.invalidResponse
-        }
-
-        let result = transcription.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedResult = result.trimmingCharacters(in: .whitespacesAndNewlines)
 
         // Filter out known hallucinations
-        if isHallucination(result) {
+        if isHallucination(trimmedResult) {
             return ""
         }
 
-        return result
+        return trimmedResult
     }
 
-    // Test API key validity
-    func testAPIKey(_ apiKey: String) async -> Bool {
-        var request = URLRequest(url: URL(string: "https://api.openai.com/v1/models")!)
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+    /// Check if the model is ready for transcription
+    func isModelReady() async -> Bool {
+        await ModelManager.shared.state.isReady
+    }
 
-        do {
-            let (_, response) = try await URLSession.shared.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse else {
-                return false
-            }
-            return httpResponse.statusCode == 200
-        } catch {
-            return false
+    /// Ensure model is loaded and ready
+    func ensureModelLoaded() async throws {
+        let modelManager = await ModelManager.shared
+
+        switch await modelManager.state {
+        case .ready:
+            return
+        case .downloaded:
+            try await modelManager.loadModel()
+        case .notDownloaded, .error:
+            throw TranscriptionError.modelNotReady
+        case .downloading, .loading:
+            // Wait a bit and check again
+            try await Task.sleep(nanoseconds: 500_000_000) // 0.5s
+            try await ensureModelLoaded()
         }
     }
 }

@@ -4,23 +4,22 @@ import Security
 class KeychainService {
     static let shared = KeychainService()
 
-    private let serviceName = "com.fluent.api"
-    private let apiKeyAccount = "openai-api-key"
+    private let serviceName = "com.fluent.app"
 
     private init() {}
 
-    // MARK: - API Key Management
+    // MARK: - Generic Keychain Operations
 
-    func saveAPIKey(_ apiKey: String) -> Bool {
+    func saveValue(_ value: String, forKey key: String) -> Bool {
         // Delete existing key first
-        deleteAPIKey()
+        deleteValue(forKey: key)
 
-        guard let data = apiKey.data(using: .utf8) else { return false }
+        guard let data = value.data(using: .utf8) else { return false }
 
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: serviceName,
-            kSecAttrAccount as String: apiKeyAccount,
+            kSecAttrAccount as String: key,
             kSecValueData as String: data,
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         ]
@@ -29,11 +28,11 @@ class KeychainService {
         return status == errSecSuccess
     }
 
-    func getAPIKey() -> String? {
+    func getValue(forKey key: String) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: serviceName,
-            kSecAttrAccount as String: apiKeyAccount,
+            kSecAttrAccount as String: key,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
@@ -43,45 +42,26 @@ class KeychainService {
 
         guard status == errSecSuccess,
               let data = result as? Data,
-              let apiKey = String(data: data, encoding: .utf8) else {
+              let value = String(data: data, encoding: .utf8) else {
             return nil
         }
 
-        return apiKey
+        return value
     }
 
     @discardableResult
-    func deleteAPIKey() -> Bool {
+    func deleteValue(forKey key: String) -> Bool {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: serviceName,
-            kSecAttrAccount as String: apiKeyAccount
+            kSecAttrAccount as String: key
         ]
 
         let status = SecItemDelete(query as CFDictionary)
         return status == errSecSuccess || status == errSecItemNotFound
     }
 
-    func hasAPIKey() -> Bool {
-        return getAPIKey() != nil
-    }
-
-    // MARK: - API Key Validation
-
-    func isValidAPIKeyFormat(_ apiKey: String) -> Bool {
-        // OpenAI API keys start with "sk-" and are typically 51 characters
-        // But newer keys may have different formats, so we're lenient
-        let trimmed = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.hasPrefix("sk-") && trimmed.count >= 20
-    }
-
-    // Returns masked version for display (e.g., "sk-...abc123")
-    func getMaskedAPIKey() -> String? {
-        guard let apiKey = getAPIKey() else { return nil }
-        guard apiKey.count > 10 else { return "sk-***" }
-
-        let prefix = String(apiKey.prefix(3))
-        let suffix = String(apiKey.suffix(6))
-        return "\(prefix)...\(suffix)"
+    func hasValue(forKey key: String) -> Bool {
+        return getValue(forKey: key) != nil
     }
 }

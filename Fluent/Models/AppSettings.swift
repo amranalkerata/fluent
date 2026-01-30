@@ -2,8 +2,6 @@ import Foundation
 
 struct AppSettings: Codable, Equatable {
     // MARK: - Transcription Settings
-    var isGPTEnhancementEnabled: Bool = true
-    var whisperModel: WhisperModel = .whisper1
     var language: TranscriptionLanguage = .auto
 
     // MARK: - Behavior Settings
@@ -17,13 +15,6 @@ struct AppSettings: Codable, Equatable {
 
     // MARK: - Audio Settings
     var audioQuality: AudioQuality = .high
-
-    enum WhisperModel: String, Codable, CaseIterable, Identifiable {
-        case whisper1 = "whisper-1"
-
-        var id: String { rawValue }
-        var displayName: String { "Whisper" }
-    }
 
     enum TranscriptionLanguage: String, Codable, CaseIterable, Identifiable {
         case auto = ""

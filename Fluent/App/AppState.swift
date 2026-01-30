@@ -65,9 +65,14 @@ class AppState: ObservableObject {
     }
 
     private func checkOnboardingStatus() {
-        // Show onboarding if API key not set
-        if KeychainService.shared.getAPIKey() == nil {
+        // Show onboarding if not completed or model not downloaded
+        if !SettingsService.shared.isOnboardingComplete || !ModelManager.shared.isModelDownloaded {
             showOnboarding = true
+        } else {
+            // Ensure model is loaded on app start
+            Task {
+                try? await ModelManager.shared.loadModel()
+            }
         }
     }
 
@@ -97,6 +102,12 @@ class AppState: ObservableObject {
             return
         }
         guard !workflowInProgress else {
+            return
+        }
+
+        // Check if model is ready
+        guard ModelManager.shared.state.isReady else {
+            transcriptionError = "Whisper model not ready. Please download and load the model in Settings."
             return
         }
 
@@ -193,7 +204,6 @@ class AppState: ObservableObject {
 
         // Capture recording metadata before transcription
         let duration = recordingDuration
-        let audioFileName = url.lastPathComponent
 
         defer {
             // Always release all locks when transcription completes (success or failure)
@@ -202,47 +212,39 @@ class AppState: ObservableObject {
             workflowInProgress = false
             // Hide overlay after workflow completes
             NotificationCenter.default.post(name: .hideRecordingOverlay, object: nil)
+            // Delete the audio file - no longer needed after transcription
+            audioService.deleteRecording(at: url)
         }
 
         do {
             let transcriptionService = TranscriptionService()
-            let originalResult = try await transcriptionService.transcribe(audioURL: url)
+            let result = try await transcriptionService.transcribe(audioURL: url)
 
             // Check for empty transcription (silence/no speech detected)
-            if originalResult.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if result.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 transcriptionError = RecordingError.noSpeechDetected.localizedDescription
                 return
             }
 
-            var finalResult = originalResult
-            var enhancedResult: String? = nil
-
-            // Apply GPT enhancement if enabled
-            if settingsService.settings.isGPTEnhancementEnabled {
-                let enhancementService = GPTEnhancementService()
-                finalResult = try await enhancementService.enhance(text: originalResult)
-                enhancedResult = finalResult
-            }
-
-            lastTranscription = finalResult
+            lastTranscription = result
 
             // Determine target application for paste
             var targetApp: String? = nil
 
             // Auto-paste if enabled (only if we have text and weren't cancelled)
-            if settingsService.settings.autoPasteEnabled && !finalResult.isEmpty {
+            if settingsService.settings.autoPasteEnabled && !result.isEmpty {
                 targetApp = NSWorkspace.shared.frontmostApplication?.localizedName
-                PasteService.shared.pasteText(finalResult)
+                PasteService.shared.pasteText(result)
             }
 
             // Save recording to history (enforces 100-item limit automatically)
             do {
                 try recordingStorageService?.saveRecording(
                     duration: duration,
-                    audioFileName: audioFileName,
-                    originalTranscription: originalResult,
-                    enhancedTranscription: enhancedResult,
-                    isPasted: settingsService.settings.autoPasteEnabled && !finalResult.isEmpty,
+                    audioFileName: nil,  // Audio file is deleted after transcription
+                    originalTranscription: result,
+                    enhancedTranscription: nil,  // No GPT enhancement anymore
+                    isPasted: settingsService.settings.autoPasteEnabled && !result.isEmpty,
                     targetApplication: targetApp
                 )
             } catch {

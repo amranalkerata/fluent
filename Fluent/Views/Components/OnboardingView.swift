@@ -2,15 +2,18 @@ import SwiftUI
 
 struct OnboardingView: View {
     @EnvironmentObject var appState: AppState
+    @ObservedObject var modelManager = ModelManager.shared
     @State private var currentStep: Int
-    @State private var apiKeyValid: Bool
 
     private let totalSteps = 4
 
     init() {
         // Always start at Welcome step
         _currentStep = State(initialValue: 0)
-        _apiKeyValid = State(initialValue: KeychainService.shared.hasAPIKey())
+    }
+
+    private var modelReady: Bool {
+        modelManager.isModelDownloaded
     }
 
     var body: some View {
@@ -47,7 +50,7 @@ struct OnboardingView: View {
                 case 0:
                     WelcomeStep()
                 case 1:
-                    APIKeyStep(isValid: $apiKeyValid)
+                    ModelDownloadStep()
                 case 2:
                     PermissionsStep()
                 default:
@@ -60,7 +63,6 @@ struct OnboardingView: View {
             HStack(spacing: FluentSpacing.md) {
                 if currentStep > 0 {
                     FluentButton("Back", icon: "chevron.left", variant: .secondary) {
-                        // NOTE: Removed withAnimation - causes deadlock with SecureField on macOS
                         currentStep -= 1
                     }
                 }
@@ -69,10 +71,9 @@ struct OnboardingView: View {
 
                 if currentStep < totalSteps - 1 {
                     FluentButton("Continue", icon: "chevron.right", iconPosition: .trailing, variant: .primary) {
-                        // NOTE: Removed withAnimation - causes deadlock with SecureField on macOS
                         currentStep += 1
                     }
-                    .disabled(currentStep == 1 && !apiKeyValid)
+                    .disabled(currentStep == 1 && !modelReady)
                 } else {
                     FluentButton("Get Started", icon: "checkmark", variant: .primary) {
                         completeOnboarding()
@@ -93,6 +94,11 @@ struct OnboardingView: View {
     private func completeOnboarding() {
         SettingsService.shared.isOnboardingComplete = true
         appState.showOnboarding = false
+
+        // Load model in background after onboarding
+        Task {
+            try? await modelManager.loadModel()
+        }
     }
 }
 
@@ -115,7 +121,7 @@ struct WelcomeStep: View {
 
             VStack(alignment: .leading, spacing: FluentSpacing.md) {
                 FeatureRow(icon: "mic.fill", title: "Voice Recording", description: "Record audio with a single keypress")
-                FeatureRow(icon: "text.bubble.fill", title: "AI Transcription", description: "Powered by OpenAI Whisper")
+                FeatureRow(icon: "cpu.fill", title: "Local AI Transcription", description: "100% offline using whisper.cpp")
                 FeatureRow(icon: "doc.on.clipboard.fill", title: "Auto-Paste", description: "Transcriptions pasted instantly")
             }
             .fluentCard()
@@ -148,109 +154,159 @@ struct FeatureRow: View {
     }
 }
 
-struct APIKeyStep: View {
-    @Binding var isValid: Bool
-    @State private var apiKey = ""
-    @State private var isValidating = false
-    @State private var error: String?
-
-    private let keychainService: KeychainService
-
-    init(isValid: Binding<Bool>) {
-        // CRITICAL: Must explicitly initialize @State when using custom init
-        self._isValid = isValid
-        self._apiKey = State(initialValue: "")
-        self._isValidating = State(initialValue: false)
-        self._error = State(initialValue: nil)
-        self.keychainService = KeychainService.shared
-    }
+struct ModelDownloadStep: View {
+    @ObservedObject var modelManager = ModelManager.shared
 
     var body: some View {
         VStack(spacing: FluentSpacing.lg) {
-            Image(systemName: "key.fill")
+            Image(systemName: "arrow.down.circle.fill")
                 .font(.system(size: 48))
-                .foregroundStyle(FluentColors.warning.gradient)
+                .foregroundStyle(FluentColors.primary.gradient)
 
             VStack(spacing: FluentSpacing.sm) {
-                Text("Enter Your API Key")
+                Text("Download Whisper Model")
                     .font(.Fluent.headlineMedium)
 
-                Text("Fluent uses OpenAI's Whisper API for transcription.\nYou'll need your own API key.")
+                Text("Fluent uses a local AI model for transcription.\nNo internet needed after download.")
                     .font(.Fluent.bodyMedium)
                     .foregroundStyle(FluentColors.textSecondary)
                     .multilineTextAlignment(.center)
             }
 
             VStack(spacing: FluentSpacing.md) {
-                // TEST: Using plain SecureField instead of FluentSecureField
-                SecureField("sk-...", text: $apiKey)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 350)
+                // Status card
+                VStack(spacing: FluentSpacing.md) {
+                    HStack(spacing: FluentSpacing.md) {
+                        Image(systemName: statusIcon)
+                            .font(.title2)
+                            .foregroundStyle(statusColor)
+                            .frame(width: 30)
 
-                if let error = error {
-                    HStack(spacing: FluentSpacing.xs) {
-                        Image(systemName: "exclamationmark.circle.fill")
-                        Text(error)
+                        VStack(alignment: .leading, spacing: FluentSpacing.xxs) {
+                            Text("Whisper Base Model")
+                                .font(.Fluent.titleSmall)
+                            Text(statusText)
+                                .font(.Fluent.caption)
+                                .foregroundStyle(FluentColors.textSecondary)
+                        }
+
+                        Spacer()
+
+                        Text(modelManager.modelSizeDescription)
+                            .font(.Fluent.monoSmall)
+                            .foregroundStyle(FluentColors.textTertiary)
                     }
-                    .font(.Fluent.caption)
-                    .foregroundStyle(FluentColors.error)
-                }
 
-                if isValid {
+                    // Progress bar when downloading
+                    if case .downloading(let progress) = modelManager.state {
+                        ProgressView(value: progress)
+                            .progressViewStyle(.linear)
+
+                        Text("\(Int(progress * 100))% downloaded")
+                            .font(.Fluent.caption)
+                            .foregroundStyle(FluentColors.textSecondary)
+                    }
+
+                    // Error message
+                    if case .error(let message) = modelManager.state {
+                        HStack(spacing: FluentSpacing.xs) {
+                            Image(systemName: "exclamationmark.circle.fill")
+                            Text(message)
+                        }
+                        .font(.Fluent.caption)
+                        .foregroundStyle(FluentColors.error)
+                    }
+
+                    // Action button
+                    actionButton
+                }
+                .padding(FluentSpacing.cardPadding)
+                .background(
+                    RoundedRectangle(cornerRadius: FluentRadius.md)
+                        .fill(FluentColors.surface)
+                )
+
+                // Info text
+                if modelManager.isModelDownloaded {
                     HStack(spacing: FluentSpacing.xs) {
                         Image(systemName: "checkmark.circle.fill")
-                        Text("API key saved successfully!")
+                        Text("Model downloaded! You can continue.")
                     }
                     .font(.Fluent.caption)
                     .foregroundStyle(FluentColors.success)
                 }
-
-                FluentButton(
-                    isValidating ? "Validating..." : "Validate & Save",
-                    icon: "checkmark.shield",
-                    variant: .primary
-                ) {
-                    validateKey()
-                }
-                .disabled(apiKey.isEmpty || isValidating)
-
-                Link("Get an API key from OpenAI",
-                     destination: URL(string: "https://platform.openai.com/api-keys")!)
-                    .font(.Fluent.caption)
             }
+            .frame(maxWidth: 350)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(FluentSpacing.cardPadding)
     }
 
-    private func validateKey() {
-        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard keychainService.isValidAPIKeyFormat(trimmedKey) else {
-            error = "Invalid format. API keys start with 'sk-'"
-            return
+    private var statusIcon: String {
+        switch modelManager.state {
+        case .notDownloaded:
+            return "arrow.down.circle"
+        case .downloading:
+            return "arrow.down.circle"
+        case .downloaded, .ready:
+            return "checkmark.circle.fill"
+        case .loading:
+            return "arrow.clockwise.circle"
+        case .error:
+            return "exclamationmark.circle"
         }
+    }
 
-        isValidating = true
-        error = nil
+    private var statusColor: Color {
+        switch modelManager.state {
+        case .notDownloaded:
+            return FluentColors.warning
+        case .downloading, .loading:
+            return FluentColors.primary
+        case .downloaded, .ready:
+            return FluentColors.success
+        case .error:
+            return FluentColors.error
+        }
+    }
 
-        Task {
-            let service = TranscriptionService()
-            let valid = await service.testAPIKey(trimmedKey)
+    private var statusText: String {
+        switch modelManager.state {
+        case .notDownloaded:
+            return "Ready to download"
+        case .downloading:
+            return "Downloading..."
+        case .downloaded:
+            return "Downloaded successfully"
+        case .loading:
+            return "Loading..."
+        case .ready:
+            return "Ready for transcription"
+        case .error:
+            return "Download failed"
+        }
+    }
 
-            await MainActor.run {
-                isValidating = false
-                if valid {
-                    let saved = keychainService.saveAPIKey(trimmedKey)
-                    if saved {
-                        isValid = true
-                    } else {
-                        error = "Failed to save API key to Keychain"
-                    }
-                } else {
-                    error = "Invalid API key. Please check and try again."
+    @ViewBuilder
+    private var actionButton: some View {
+        switch modelManager.state {
+        case .notDownloaded, .error:
+            FluentButton("Download Model", icon: "arrow.down.circle", variant: .primary) {
+                Task {
+                    try? await modelManager.downloadModel()
                 }
             }
+        case .downloading:
+            FluentButton("Cancel", icon: "xmark", variant: .secondary) {
+                modelManager.cancelDownload()
+            }
+        case .downloaded, .loading, .ready:
+            HStack(spacing: FluentSpacing.xs) {
+                Image(systemName: "checkmark.circle.fill")
+                Text("Download Complete")
+            }
+            .font(.Fluent.bodyMedium)
+            .foregroundStyle(FluentColors.success)
         }
     }
 }

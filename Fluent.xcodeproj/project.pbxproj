@@ -15,7 +15,9 @@
 		006 /* Recording.swift in Sources */ = {isa = PBXBuildFile; fileRef = 106 /* Recording.swift */; };
 		008 /* AudioRecordingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 108 /* AudioRecordingService.swift */; };
 		009 /* TranscriptionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 109 /* TranscriptionService.swift */; };
-		010 /* GPTEnhancementService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 110 /* GPTEnhancementService.swift */; };
+		043 /* ModelManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 144 /* ModelManager.swift */; };
+		044 /* AudioConverter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 145 /* AudioConverter.swift */; };
+		045 /* whisper in Frameworks */ = {isa = PBXBuildFile; productRef = 500 /* whisper */; };
 		011 /* HotkeyService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111 /* HotkeyService.swift */; };
 		012 /* KeychainService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 112 /* KeychainService.swift */; };
 		013 /* SettingsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 113 /* SettingsService.swift */; };
@@ -58,7 +60,8 @@
 		106 /* Recording.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Recording.swift; sourceTree = "<group>"; };
 		108 /* AudioRecordingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRecordingService.swift; sourceTree = "<group>"; };
 		109 /* TranscriptionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptionService.swift; sourceTree = "<group>"; };
-		110 /* GPTEnhancementService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GPTEnhancementService.swift; sourceTree = "<group>"; };
+		144 /* ModelManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelManager.swift; sourceTree = "<group>"; };
+		145 /* AudioConverter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioConverter.swift; sourceTree = "<group>"; };
 		111 /* HotkeyService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyService.swift; sourceTree = "<group>"; };
 		112 /* KeychainService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainService.swift; sourceTree = "<group>"; };
 		113 /* SettingsService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsService.swift; sourceTree = "<group>"; };
@@ -100,6 +103,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				045 /* whisper in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -221,6 +225,7 @@
 			children = (
 				108 /* AudioRecordingService.swift */,
 				142 /* SoundService.swift */,
+				145 /* AudioConverter.swift */,
 			);
 			path = Audio;
 			sourceTree = "<group>";
@@ -229,7 +234,7 @@
 			isa = PBXGroup;
 			children = (
 				109 /* TranscriptionService.swift */,
-				110 /* GPTEnhancementService.swift */,
+				144 /* ModelManager.swift */,
 			);
 			path = Transcription;
 			sourceTree = "<group>";
@@ -331,6 +336,9 @@
 			dependencies = (
 			);
 			name = Fluent;
+			packageProductDependencies = (
+				500 /* whisper */,
+			);
 			productName = Fluent;
 			productReference = 900 /* Fluent.app */;
 			productType = "com.apple.product-type.application";
@@ -360,6 +368,9 @@
 			);
 			mainGroup = 000;
 			productRefGroup = 901 /* Products */;
+			packageReferences = (
+				501 /* XCRemoteSwiftPackageReference "whisper.spm" */,
+			);
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -393,7 +404,6 @@
 				006 /* Recording.swift in Sources */,
 				008 /* AudioRecordingService.swift in Sources */,
 				009 /* TranscriptionService.swift in Sources */,
-				010 /* GPTEnhancementService.swift in Sources */,
 				011 /* HotkeyService.swift in Sources */,
 				012 /* KeychainService.swift in Sources */,
 				039 /* RecordingStorageService.swift in Sources */,
@@ -423,6 +433,8 @@
 				037 /* FluentEmptyState.swift in Sources */,
 				038 /* FluentBadge.swift in Sources */,
 				041 /* SoundService.swift in Sources */,
+				043 /* ModelManager.swift in Sources */,
+				044 /* AudioConverter.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -639,6 +651,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		501 /* XCRemoteSwiftPackageReference "whisper.spm" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/ggerganov/whisper.spm.git";
+			requirement = {
+				kind = branch;
+				branch = master;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		500 /* whisper */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 501 /* XCRemoteSwiftPackageReference "whisper.spm" */;
+			productName = whisper;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 600 /* Project object */;
 }

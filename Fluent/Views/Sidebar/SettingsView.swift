@@ -2,15 +2,15 @@ import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject var settingsService = SettingsService.shared
-    @State private var showingAPIKeySheet = false
+    @ObservedObject var modelManager = ModelManager.shared
     @State private var showingResetConfirmation = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: FluentSpacing.sectionSpacing) {
-                // API Key Section
-                FluentSettingsSection("API Key", icon: "key") {
-                    APIKeySettingsCard(showingSheet: $showingAPIKeySheet)
+                // Model Section
+                FluentSettingsSection("Whisper Model", icon: "cpu") {
+                    ModelSettingsCard()
                 }
                 .fluentAppear(delay: 0)
 
@@ -50,65 +50,172 @@ struct SettingsView: View {
         }
         .background(FluentColors.background)
         .navigationTitle("Settings")
-        .sheet(isPresented: $showingAPIKeySheet) {
-            APIKeySheet()
-        }
         .alert("Reset All Settings?", isPresented: $showingResetConfirmation) {
             Button("Cancel", role: .cancel) { }
             Button("Reset", role: .destructive) {
                 settingsService.resetAllSettings()
             }
         } message: {
-            Text("This will reset all settings to their default values. Your API key will not be affected.")
+            Text("This will reset all settings to their default values. The downloaded model will not be affected.")
         }
     }
 }
 
-struct APIKeySettingsCard: View {
-    @Binding var showingSheet: Bool
-    private let keychainService = KeychainService.shared
-    @State private var isHovered = false
-
-    private var isConfigured: Bool {
-        keychainService.hasAPIKey()
-    }
+struct ModelSettingsCard: View {
+    @ObservedObject var modelManager = ModelManager.shared
+    @State private var showingDeleteConfirmation = false
 
     var body: some View {
-        HStack(spacing: FluentSpacing.md) {
-            // Status indicator with icon background
-            Image(systemName: isConfigured ? "checkmark.circle.fill" : "key.fill")
-                .font(.system(size: 16, weight: .medium))
-                .foregroundStyle(isConfigured ? FluentColors.success : FluentColors.warning)
-                .frame(width: 32, height: 32)
-                .background(
-                    RoundedRectangle(cornerRadius: FluentRadius.sm)
-                        .fill((isConfigured ? FluentColors.success : FluentColors.warning).opacity(0.12))
-                )
+        VStack(spacing: FluentSpacing.md) {
+            HStack(spacing: FluentSpacing.md) {
+                // Status indicator with icon background
+                Image(systemName: statusIcon)
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(statusColor)
+                    .frame(width: 32, height: 32)
+                    .background(
+                        RoundedRectangle(cornerRadius: FluentRadius.sm)
+                            .fill(statusColor.opacity(0.12))
+                    )
 
-            VStack(alignment: .leading, spacing: FluentSpacing.xxs) {
-                Text("OpenAI API Key")
-                    .font(.Fluent.titleSmall)
+                VStack(alignment: .leading, spacing: FluentSpacing.xxs) {
+                    Text("Whisper Base Model")
+                        .font(.Fluent.titleSmall)
 
-                if let maskedKey = keychainService.getMaskedAPIKey() {
-                    Text(maskedKey)
-                        .font(.Fluent.monoSmall)
-                        .foregroundStyle(FluentColors.textSecondary)
-                } else {
-                    Text("Not configured")
+                    Text(statusText)
                         .font(.Fluent.caption)
                         .foregroundStyle(FluentColors.textSecondary)
                 }
+
+                Spacer()
+
+                actionButton
             }
 
-            Spacer()
+            // Progress bar when downloading
+            if case .downloading(let progress) = modelManager.state {
+                VStack(spacing: FluentSpacing.xs) {
+                    ProgressView(value: progress)
+                        .progressViewStyle(.linear)
 
-            FluentButton(
-                isConfigured ? "Change" : "Add Key",
-                icon: isConfigured ? "pencil" : "plus",
-                variant: isConfigured ? .secondary : .primary
-            ) {
-                showingSheet = true
+                    HStack {
+                        Text("\(Int(progress * 100))%")
+                            .font(.Fluent.monoSmall)
+                            .foregroundStyle(FluentColors.textSecondary)
+
+                        Spacer()
+
+                        Text(modelManager.modelSizeDescription)
+                            .font(.Fluent.caption)
+                            .foregroundStyle(FluentColors.textSecondary)
+                    }
+                }
             }
+
+            // Model info when ready
+            if modelManager.state.isReady || modelManager.state == .downloaded {
+                FluentDivider(inset: true)
+
+                HStack {
+                    VStack(alignment: .leading, spacing: FluentSpacing.xxs) {
+                        Text("Model Info")
+                            .font(.Fluent.caption)
+                            .foregroundStyle(FluentColors.textSecondary)
+
+                        Text("Base model - Fast & accurate for most use cases")
+                            .font(.Fluent.caption)
+                            .foregroundStyle(FluentColors.textTertiary)
+                    }
+
+                    Spacer()
+
+                    FluentButton("Delete", icon: "trash", variant: .destructive, size: .small) {
+                        showingDeleteConfirmation = true
+                    }
+                }
+            }
+        }
+        .alert("Delete Model?", isPresented: $showingDeleteConfirmation) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete", role: .destructive) {
+                modelManager.deleteModel()
+            }
+        } message: {
+            Text("This will delete the downloaded model. You'll need to download it again to use transcription.")
+        }
+    }
+
+    private var statusIcon: String {
+        switch modelManager.state {
+        case .notDownloaded:
+            return "arrow.down.circle"
+        case .downloading:
+            return "arrow.down.circle"
+        case .downloaded:
+            return "checkmark.circle"
+        case .loading:
+            return "arrow.clockwise.circle"
+        case .ready:
+            return "checkmark.circle.fill"
+        case .error:
+            return "exclamationmark.circle.fill"
+        }
+    }
+
+    private var statusColor: Color {
+        switch modelManager.state {
+        case .notDownloaded:
+            return FluentColors.warning
+        case .downloading, .loading:
+            return FluentColors.primary
+        case .downloaded, .ready:
+            return FluentColors.success
+        case .error:
+            return FluentColors.error
+        }
+    }
+
+    private var statusText: String {
+        switch modelManager.state {
+        case .notDownloaded:
+            return "Not downloaded (\(modelManager.modelSizeDescription))"
+        case .downloading:
+            return "Downloading..."
+        case .downloaded:
+            return "Downloaded - tap Load to activate"
+        case .loading:
+            return "Loading model..."
+        case .ready:
+            return "Ready for transcription"
+        case .error(let message):
+            return "Error: \(message)"
+        }
+    }
+
+    @ViewBuilder
+    private var actionButton: some View {
+        switch modelManager.state {
+        case .notDownloaded, .error:
+            FluentButton("Download", icon: "arrow.down.circle", variant: .primary) {
+                Task {
+                    try? await modelManager.downloadModel()
+                }
+            }
+        case .downloading:
+            FluentButton("Cancel", icon: "xmark", variant: .secondary) {
+                modelManager.cancelDownload()
+            }
+        case .downloaded:
+            FluentButton("Load", icon: "play.fill", variant: .primary) {
+                Task {
+                    try? await modelManager.loadModel()
+                }
+            }
+        case .loading:
+            ProgressView()
+                .controlSize(.small)
+        case .ready:
+            FluentStatusBadge(variant: .success)
         }
     }
 }
@@ -118,15 +225,6 @@ struct TranscriptionSettingsCard: View {
 
     var body: some View {
         VStack(spacing: FluentSpacing.md) {
-            // GPT Enhancement
-            FluentToggle(
-                title: "AI Enhancement",
-                description: "Improve transcription with auto-punctuation and formatting",
-                isOn: $settingsService.settings.isGPTEnhancementEnabled
-            )
-
-            FluentDivider(inset: true)
-
             // Language
             HStack {
                 VStack(alignment: .leading, spacing: FluentSpacing.xxs) {
@@ -306,7 +404,7 @@ struct AboutSettingsCard: View {
                 Spacer()
             }
 
-            Text("An open-source voice dictation app for macOS.\nPowered by OpenAI Whisper.")
+            Text("An open-source voice dictation app for macOS.\nPowered by local whisper.cpp for 100% offline transcription.")
                 .font(.Fluent.caption)
                 .foregroundStyle(FluentColors.textSecondary)
 
@@ -353,117 +451,6 @@ struct AboutSettingsCard: View {
                         Text("Report Issue")
                     }
                     .font(.Fluent.caption)
-                }
-            }
-        }
-    }
-}
-
-struct APIKeySheet: View {
-    @Environment(\.dismiss) private var dismiss
-    @State private var apiKey = ""
-    @State private var isValidating = false
-    @State private var validationError: String?
-    @State private var isValid = false
-
-    private let keychainService = KeychainService.shared
-
-    var body: some View {
-        VStack(spacing: FluentSpacing.sectionSpacing) {
-            Text("OpenAI API Key")
-                .font(.Fluent.headlineSmall)
-
-            VStack(alignment: .leading, spacing: FluentSpacing.sm) {
-                Text("Enter your OpenAI API key to enable transcription.")
-                    .font(.Fluent.bodyMedium)
-                    .foregroundStyle(FluentColors.textSecondary)
-
-                FluentSecureField("sk-...", text: $apiKey)
-                    .onChange(of: apiKey) { _, _ in
-                        validationError = nil
-                        isValid = false
-                    }
-
-                if let error = validationError {
-                    HStack(spacing: FluentSpacing.xs) {
-                        Image(systemName: "exclamationmark.circle.fill")
-                        Text(error)
-                    }
-                    .font(.Fluent.caption)
-                    .foregroundStyle(FluentColors.error)
-                }
-
-                if isValid {
-                    HStack(spacing: FluentSpacing.xs) {
-                        Image(systemName: "checkmark.circle.fill")
-                        Text("API key is valid")
-                    }
-                    .font(.Fluent.caption)
-                    .foregroundStyle(FluentColors.success)
-                }
-
-                Link("Get an API key from OpenAI", destination: URL(string: "https://platform.openai.com/api-keys")!)
-                    .font(.Fluent.caption)
-            }
-
-            HStack(spacing: FluentSpacing.md) {
-                FluentButton("Cancel", variant: .tertiary) {
-                    dismiss()
-                }
-                .keyboardShortcut(.cancelAction)
-
-                Spacer()
-
-                if keychainService.hasAPIKey() {
-                    FluentButton("Remove Key", icon: "trash", variant: .destructive) {
-                        keychainService.deleteAPIKey()
-                        dismiss()
-                    }
-                }
-
-                FluentButton("Validate & Save", icon: "checkmark.shield", variant: .primary) {
-                    validateAndSave()
-                }
-                .disabled(apiKey.isEmpty || isValidating)
-            }
-        }
-        .padding(FluentSpacing.pagePadding)
-        .frame(width: 450)
-    }
-
-    private func validateAndSave() {
-        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        // Basic format check
-        guard keychainService.isValidAPIKeyFormat(trimmedKey) else {
-            validationError = "Invalid API key format. Keys should start with 'sk-'"
-            return
-        }
-
-        isValidating = true
-        validationError = nil
-
-        Task {
-            let transcriptionService = TranscriptionService()
-            let valid = await transcriptionService.testAPIKey(trimmedKey)
-
-            await MainActor.run {
-                isValidating = false
-
-                if valid {
-                    isValid = true
-                    let saved = keychainService.saveAPIKey(trimmedKey)
-
-                    if saved {
-                        // Dismiss after brief delay to show success
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                            dismiss()
-                        }
-                    } else {
-                        validationError = "Failed to save API key to keychain."
-                    }
-                } else {
-                    validationError = "API key validation failed. Please check your key."
                 }
             }
         }
