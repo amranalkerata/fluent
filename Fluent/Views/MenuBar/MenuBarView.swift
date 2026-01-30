@@ -62,7 +62,10 @@ struct MenuBarView: View {
                         icon: "doc.on.clipboard",
                         shortcut: "⌥⇧V"
                     ) {
-                        appState.pasteLastTranscript()
+                        // Delay to allow focus to return to target app after menu closes
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                            appState.pasteLastTranscript()
+                        }
                     }
                 }
 
