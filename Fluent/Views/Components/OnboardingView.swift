@@ -121,7 +121,7 @@ struct WelcomeStep: View {
 
             VStack(alignment: .leading, spacing: FluentSpacing.md) {
                 FeatureRow(icon: "mic.fill", title: "Voice Recording", description: "Record audio with a single keypress")
-                FeatureRow(icon: "cpu.fill", title: "Local AI Transcription", description: "100% offline using whisper.cpp")
+                FeatureRow(icon: "cpu.fill", title: "Local AI Transcription", description: "100% offline using WhisperKit")
                 FeatureRow(icon: "doc.on.clipboard.fill", title: "Auto-Paste", description: "Transcriptions pasted instantly")
             }
             .fluentCard()
@@ -183,7 +183,7 @@ struct ModelDownloadStep: View {
                             .frame(width: 30)
 
                         VStack(alignment: .leading, spacing: FluentSpacing.xxs) {
-                            Text("Whisper Base Model")
+                            Text("Whisper Small Model")
                                 .font(.Fluent.titleSmall)
                             Text(statusText)
                                 .font(.Fluent.caption)
@@ -246,7 +246,7 @@ struct ModelDownloadStep: View {
         switch modelManager.state {
         case .notDownloaded:
             return "arrow.down.circle"
-        case .downloading:
+        case .downloading, .retrying:
             return "arrow.down.circle"
         case .downloaded, .ready:
             return "checkmark.circle.fill"
@@ -261,7 +261,7 @@ struct ModelDownloadStep: View {
         switch modelManager.state {
         case .notDownloaded:
             return FluentColors.warning
-        case .downloading, .loading:
+        case .downloading, .retrying, .loading:
             return FluentColors.primary
         case .downloaded, .ready:
             return FluentColors.success
@@ -276,6 +276,8 @@ struct ModelDownloadStep: View {
             return "Ready to download"
         case .downloading:
             return "Downloading..."
+        case .retrying(let attempt, let maxAttempts):
+            return "Retrying download (\(attempt)/\(maxAttempts))..."
         case .downloaded:
             return "Downloaded successfully"
         case .loading:
@@ -296,7 +298,7 @@ struct ModelDownloadStep: View {
                     try? await modelManager.downloadModel()
                 }
             }
-        case .downloading:
+        case .downloading, .retrying:
             FluentButton("Cancel", icon: "xmark", variant: .secondary) {
                 modelManager.cancelDownload()
             }

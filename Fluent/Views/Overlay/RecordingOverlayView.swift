@@ -5,7 +5,7 @@ struct RecordingOverlayView: View {
     @EnvironmentObject var audioService: AudioRecordingService
 
     var body: some View {
-        Group {
+        VStack(spacing: FluentSpacing.xs) {
             if appState.isRecording {
                 // Recording UI
                 HStack(spacing: FluentSpacing.sm) {
@@ -22,13 +22,25 @@ struct RecordingOverlayView: View {
                     CompactWaveformView(levels: audioService.audioLevels, isRecording: appState.isRecording)
                         .frame(width: 80, height: 24)
                 }
+
+                // Real-time transcription preview
+                if let partial = appState.partialTranscription, !partial.isEmpty {
+                    Text(partial)
+                        .font(.Fluent.caption)
+                        .foregroundStyle(FluentColors.textSecondary)
+                        .lineLimit(2)
+                        .truncationMode(.head)
+                        .frame(maxWidth: 250)
+                        .multilineTextAlignment(.center)
+                        .animation(.easeInOut(duration: 0.15), value: partial)
+                }
             } else if appState.isTranscribing {
                 // Processing UI
                 HStack(spacing: FluentSpacing.sm) {
                     ProgressView()
                         .scaleEffect(0.8)
 
-                    Text("Processing...")
+                    Text("Finalizing...")
                         .font(.Fluent.caption)
                         .foregroundStyle(FluentColors.textSecondary)
                 }

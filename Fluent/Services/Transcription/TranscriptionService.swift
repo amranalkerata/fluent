@@ -58,6 +58,37 @@ class TranscriptionService {
         return hallucinationPhrases.contains(normalized) || normalized.count < 2
     }
 
+    /// Streaming transcription - transcribes audio as it's being recorded
+    /// Returns the final transcription and provides partial results via callback
+    func transcribeStreaming(
+        audioStream: AsyncStream<[Float]>,
+        onPartialResult: @escaping (String) -> Void
+    ) async throws -> String {
+        let modelManager = await ModelManager.shared
+        guard await modelManager.state.isReady else {
+            throw TranscriptionError.modelNotReady
+        }
+
+        let result = try await modelManager.transcribeStreaming(
+            audioStream: audioStream,
+            onPartialResult: { partial in
+                // Filter out hallucinations from partial results
+                if !self.isHallucination(partial) {
+                    onPartialResult(partial)
+                }
+            }
+        )
+
+        let trimmedResult = result.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Filter out hallucinations from final result
+        if isHallucination(trimmedResult) {
+            return ""
+        }
+
+        return trimmedResult
+    }
+
     func transcribe(audioURL: URL) async throws -> String {
         // Check model is ready
         let modelManager = await ModelManager.shared
@@ -122,7 +153,7 @@ class TranscriptionService {
             try await modelManager.loadModel()
         case .notDownloaded, .error:
             throw TranscriptionError.modelNotReady
-        case .downloading, .loading:
+        case .downloading, .retrying, .loading:
             // Wait a bit and check again
             try await Task.sleep(nanoseconds: 500_000_000) // 0.5s
             try await ensureModelLoaded()

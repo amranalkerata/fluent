@@ -11,6 +11,8 @@ class AppState: ObservableObject {
     @Published var lastTranscription: String?
     @Published var isTranscribing = false
     @Published var transcriptionError: String?
+    @Published var partialTranscription: String?  // Real-time transcription during recording
+    @Published var isModelLoading = false  // Track model loading state for UI feedback
 
     // MARK: - UI State
     @Published var selectedSidebarItem: SidebarItem = .home
@@ -69,10 +71,20 @@ class AppState: ObservableObject {
         if !SettingsService.shared.isOnboardingComplete || !ModelManager.shared.isModelDownloaded {
             showOnboarding = true
         } else {
-            // Ensure model is loaded on app start
-            Task {
-                try? await ModelManager.shared.loadModel()
+            // Load model on app start and track completion
+            loadModelOnStartup()
+        }
+    }
+
+    private func loadModelOnStartup() {
+        isModelLoading = true
+        Task {
+            do {
+                try await ModelManager.shared.loadModel()
+            } catch {
+                transcriptionError = "Failed to load model: \(error.localizedDescription)"
             }
+            isModelLoading = false
         }
     }
 
@@ -105,14 +117,31 @@ class AppState: ObservableObject {
             return
         }
 
-        // Check if model is ready
-        guard ModelManager.shared.state.isReady else {
-            transcriptionError = "Whisper model not ready. Please download and load the model in Settings."
+        // Check if model is ready - provide specific feedback based on state
+        let modelState = ModelManager.shared.state
+        guard modelState.isReady else {
+            switch modelState {
+            case .loading:
+                transcriptionError = "Model is still loading, please wait a moment..."
+            case .downloading:
+                transcriptionError = "Model is still downloading. Please wait for download to complete."
+            case .retrying(let attempt, let maxAttempts):
+                transcriptionError = "Download interrupted, retrying (\(attempt)/\(maxAttempts))..."
+            case .downloaded:
+                // Model downloaded but not loaded - try to load it now
+                transcriptionError = "Loading model, please try again in a moment..."
+                loadModelOnStartup()
+            case .notDownloaded, .error:
+                transcriptionError = "WhisperKit model not ready. Please download and load the model in Settings."
+            case .ready:
+                break // Won't reach here due to guard
+            }
             return
         }
 
         // Set workflow lock at the START of the cycle
         workflowInProgress = true
+        partialTranscription = nil  // Clear any previous partial transcription
 
         Task {
             do {
@@ -120,6 +149,8 @@ class AppState: ObservableObject {
                 SoundService.shared.playRecordingSound()
                 // Show overlay
                 NotificationCenter.default.post(name: .showRecordingOverlay, object: self)
+                // Note: Streaming transcription removed - file-based transcription is faster
+                // (streaming had O(n²) complexity, re-transcribing all audio every second)
             } catch {
                 transcriptionError = "Failed to start recording: \(error.localizedDescription)"
                 workflowInProgress = false // Release lock on failure
@@ -151,8 +182,7 @@ class AppState: ObservableObject {
                     audioService.deleteRecording(at: url)
                     transcriptionError = RecordingError.recordingTooShort.localizedDescription
                     NotificationCenter.default.post(name: .hideRecordingOverlay, object: nil)
-                    isStoppingRecording = false
-                    workflowInProgress = false
+                    cleanupAfterRecording()
                     return
                 }
 
@@ -161,19 +191,23 @@ class AppState: ObservableObject {
                     audioService.deleteRecording(at: url)
                     transcriptionError = RecordingError.noSpeechDetected.localizedDescription
                     NotificationCenter.default.post(name: .hideRecordingOverlay, object: nil)
-                    isStoppingRecording = false
-                    workflowInProgress = false
+                    cleanupAfterRecording()
                     return
                 }
 
-                await transcribeRecording(url: url)
+                await transcribeRecording(url: url, duration: duration)
             } else {
                 // No URL means recording was cancelled or failed - hide now
                 NotificationCenter.default.post(name: .hideRecordingOverlay, object: nil)
-                isStoppingRecording = false
-                workflowInProgress = false
+                cleanupAfterRecording()
             }
         }
+    }
+
+    private func cleanupAfterRecording() {
+        partialTranscription = nil
+        isStoppingRecording = false
+        workflowInProgress = false
     }
 
     func cancelRecording() {
@@ -183,40 +217,35 @@ class AppState: ObservableObject {
             _ = await audioService.stopRecording()
             NotificationCenter.default.post(name: .hideRecordingOverlay, object: nil)
             // Don't transcribe, just discard - release all locks
-            isStoppingRecording = false
-            workflowInProgress = false
+            cleanupAfterRecording()
         }
     }
 
     // MARK: - Transcription
 
-    private func transcribeRecording(url: URL) async {
+    private func transcribeRecording(url: URL, duration: TimeInterval) async {
         guard !isTranscribing else {
             // Reset flags and hide overlay since we're not proceeding
             NotificationCenter.default.post(name: .hideRecordingOverlay, object: nil)
-            isStoppingRecording = false
-            workflowInProgress = false
+            cleanupAfterRecording()
             return
         }
 
         isTranscribing = true
         transcriptionError = nil
 
-        // Capture recording metadata before transcription
-        let duration = recordingDuration
-
         defer {
             // Always release all locks when transcription completes (success or failure)
             isTranscribing = false
-            isStoppingRecording = false
-            workflowInProgress = false
             // Hide overlay after workflow completes
             NotificationCenter.default.post(name: .hideRecordingOverlay, object: nil)
             // Delete the audio file - no longer needed after transcription
             audioService.deleteRecording(at: url)
+            cleanupAfterRecording()
         }
 
         do {
+            // Use file-based transcription (fast, single-pass O(n) complexity)
             let transcriptionService = TranscriptionService()
             let result = try await transcriptionService.transcribe(audioURL: url)
 
@@ -227,6 +256,7 @@ class AppState: ObservableObject {
             }
 
             lastTranscription = result
+            partialTranscription = nil  // Clear partial now that we have final
 
             // Determine target application for paste
             var targetApp: String? = nil

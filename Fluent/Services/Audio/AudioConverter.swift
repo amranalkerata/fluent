@@ -22,11 +22,11 @@ enum AudioConversionError: LocalizedError {
 }
 
 class AudioConverter {
-    // whisper.cpp requires 16kHz mono PCM
+    // WhisperKit requires 16kHz mono PCM
     static let targetSampleRate: Double = 16000
     static let targetChannels: AVAudioChannelCount = 1
 
-    /// Convert audio file to 16kHz mono Float32 samples for whisper.cpp
+    /// Convert audio file to 16kHz mono Float32 samples for WhisperKit
     static func convertToWhisperSamples(url: URL) async throws -> [Float] {
         guard FileManager.default.fileExists(atPath: url.path) else {
             throw AudioConversionError.fileNotFound

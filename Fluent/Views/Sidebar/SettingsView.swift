@@ -79,7 +79,7 @@ struct ModelSettingsCard: View {
                     )
 
                 VStack(alignment: .leading, spacing: FluentSpacing.xxs) {
-                    Text("Whisper Base Model")
+                    Text("Whisper Small Model")
                         .font(.Fluent.titleSmall)
 
                     Text(statusText)
@@ -122,7 +122,7 @@ struct ModelSettingsCard: View {
                             .font(.Fluent.caption)
                             .foregroundStyle(FluentColors.textSecondary)
 
-                        Text("Base model - Fast & accurate for most use cases")
+                        Text("Small model - Better accuracy for multilingual")
                             .font(.Fluent.caption)
                             .foregroundStyle(FluentColors.textTertiary)
                     }
@@ -149,7 +149,7 @@ struct ModelSettingsCard: View {
         switch modelManager.state {
         case .notDownloaded:
             return "arrow.down.circle"
-        case .downloading:
+        case .downloading, .retrying:
             return "arrow.down.circle"
         case .downloaded:
             return "checkmark.circle"
@@ -166,7 +166,7 @@ struct ModelSettingsCard: View {
         switch modelManager.state {
         case .notDownloaded:
             return FluentColors.warning
-        case .downloading, .loading:
+        case .downloading, .retrying, .loading:
             return FluentColors.primary
         case .downloaded, .ready:
             return FluentColors.success
@@ -181,6 +181,8 @@ struct ModelSettingsCard: View {
             return "Not downloaded (\(modelManager.modelSizeDescription))"
         case .downloading:
             return "Downloading..."
+        case .retrying(let attempt, let maxAttempts):
+            return "Retrying download (\(attempt)/\(maxAttempts))..."
         case .downloaded:
             return "Downloaded - tap Load to activate"
         case .loading:
@@ -201,7 +203,7 @@ struct ModelSettingsCard: View {
                     try? await modelManager.downloadModel()
                 }
             }
-        case .downloading:
+        case .downloading, .retrying:
             FluentButton("Cancel", icon: "xmark", variant: .secondary) {
                 modelManager.cancelDownload()
             }
@@ -404,7 +406,7 @@ struct AboutSettingsCard: View {
                 Spacer()
             }
 
-            Text("An open-source voice dictation app for macOS.\nPowered by local whisper.cpp for 100% offline transcription.")
+            Text("An open-source voice dictation app for macOS.\nPowered by local WhisperKit for 100% offline transcription.")
                 .font(.Fluent.caption)
                 .foregroundStyle(FluentColors.textSecondary)
 

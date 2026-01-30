@@ -17,7 +17,7 @@
 		009 /* TranscriptionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 109 /* TranscriptionService.swift */; };
 		043 /* ModelManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 144 /* ModelManager.swift */; };
 		044 /* AudioConverter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 145 /* AudioConverter.swift */; };
-		045 /* whisper in Frameworks */ = {isa = PBXBuildFile; productRef = 500 /* whisper */; };
+		045 /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = 500 /* WhisperKit */; };
 		011 /* HotkeyService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111 /* HotkeyService.swift */; };
 		012 /* KeychainService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 112 /* KeychainService.swift */; };
 		013 /* SettingsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 113 /* SettingsService.swift */; };
@@ -103,7 +103,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				045 /* whisper in Frameworks */,
+				045 /* WhisperKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -369,7 +369,7 @@
 			mainGroup = 000;
 			productRefGroup = 901 /* Products */;
 			packageReferences = (
-				501 /* XCRemoteSwiftPackageReference "whisper.spm" */,
+				501 /* XCRemoteSwiftPackageReference "WhisperKit" */,
 			);
 			projectDirPath = "";
 			projectRoot = "";
@@ -653,21 +653,21 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		501 /* XCRemoteSwiftPackageReference "whisper.spm" */ = {
+		501 /* XCRemoteSwiftPackageReference "WhisperKit" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/ggerganov/whisper.spm.git";
+			repositoryURL = "https://github.com/argmaxinc/WhisperKit.git";
 			requirement = {
-				kind = branch;
-				branch = master;
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.9.0;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		500 /* whisper */ = {
+		500 /* WhisperKit */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 501 /* XCRemoteSwiftPackageReference "whisper.spm" */;
-			productName = whisper;
+			package = 501 /* XCRemoteSwiftPackageReference "WhisperKit" */;
+			productName = WhisperKit;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

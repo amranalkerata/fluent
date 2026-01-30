@@ -1,9 +1,10 @@
 import Foundation
-import whisper
+import WhisperKit
 
 enum ModelState: Equatable {
     case notDownloaded
     case downloading(progress: Double)
+    case retrying(attempt: Int, maxAttempts: Int)
     case downloaded
     case loading
     case ready
@@ -18,6 +19,8 @@ enum ModelState: Equatable {
             return true
         case (.downloading(let p1), .downloading(let p2)):
             return p1 == p2
+        case (.retrying(let a1, let m1), .retrying(let a2, let m2)):
+            return a1 == a2 && m1 == m2
         case (.error(let e1), .error(let e2)):
             return e1 == e2
         default:
@@ -32,6 +35,7 @@ enum ModelState: Equatable {
 
     var isDownloading: Bool {
         if case .downloading = self { return true }
+        if case .retrying = self { return true }
         return false
     }
 }
@@ -41,6 +45,7 @@ enum ModelError: LocalizedError {
     case loadFailed(String)
     case modelNotDownloaded
     case invalidModelFile
+    case transcriptionFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -52,30 +57,31 @@ enum ModelError: LocalizedError {
             return "Model not downloaded. Please download the model first."
         case .invalidModelFile:
             return "Invalid or corrupted model file."
+        case .transcriptionFailed(let reason):
+            return "Transcription failed: \(reason)"
         }
     }
 }
 
 @MainActor
-class ModelManager: NSObject, ObservableObject {
+class ModelManager: ObservableObject {
     static let shared = ModelManager()
 
     @Published private(set) var state: ModelState = .notDownloaded
     @Published private(set) var downloadProgress: Double = 0
 
-    private var whisperContext: OpaquePointer?
-    private var downloadTask: URLSessionDownloadTask?
-    private var downloadSession: URLSession?
-    private var downloadContinuation: CheckedContinuation<Void, Error>?
-    private var isLoading = false  // Guard against concurrent/re-entrant loads
+    private var whisperKit: WhisperKit?
+    private var downloadTask: Task<Void, Error>?
 
-    private let modelFileName = "ggml-base.bin"
-    private let modelURL = URL(string: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin")!
-    private let expectedModelSize: Int64 = 142_000_000 // ~142MB
-    private let minimumValidModelSize: Int64 = 140_000_000 // ~140MB minimum for valid base model
+    // WhisperKit model configuration
+    private let modelName = "small"  // Options: tiny, base, small, medium, large
+    private let modelRepo = "argmaxinc/whisperkit-coreml"
 
-    private override init() {
-        super.init()
+    // Retry configuration
+    private let maxRetryAttempts = 3
+    private let initialRetryDelay: TimeInterval = 2.0
+
+    private init() {
         checkModelExists()
     }
 
@@ -83,25 +89,29 @@ class ModelManager: NSObject, ObservableObject {
 
     private var modelsDirectory: URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return appSupport.appendingPathComponent("Fluent/Models", isDirectory: true)
+        return appSupport.appendingPathComponent("Fluent/WhisperKitModels", isDirectory: true)
     }
 
     private var modelPath: URL {
-        modelsDirectory.appendingPathComponent(modelFileName)
+        modelsDirectory.appendingPathComponent("openai_whisper-\(modelName)")
     }
 
     // MARK: - State Check
 
     private func checkModelExists() {
-        if FileManager.default.fileExists(atPath: modelPath.path) {
-            // Verify file size is reasonable - use stricter threshold to catch incomplete downloads
-            if let attrs = try? FileManager.default.attributesOfItem(atPath: modelPath.path),
-               let size = attrs[.size] as? Int64,
-               size > minimumValidModelSize { // ~140MB minimum for valid base model
+        // Check if WhisperKit model folder exists with expected files
+        let modelFolder = modelPath
+        if FileManager.default.fileExists(atPath: modelFolder.path) {
+            // Check for key model files (MelSpectrogram and AudioEncoder are required)
+            let melPath = modelFolder.appendingPathComponent("MelSpectrogram.mlmodelc")
+            let encoderPath = modelFolder.appendingPathComponent("AudioEncoder.mlmodelc")
+
+            if FileManager.default.fileExists(atPath: melPath.path) &&
+               FileManager.default.fileExists(atPath: encoderPath.path) {
                 state = .downloaded
             } else {
-                // File exists but is invalid/incomplete - remove it
-                try? FileManager.default.removeItem(at: modelPath)
+                // Incomplete model - remove and re-download
+                try? FileManager.default.removeItem(at: modelFolder)
                 state = .notDownloaded
             }
         } else {
@@ -109,43 +119,103 @@ class ModelManager: NSObject, ObservableObject {
         }
     }
 
-    // MARK: - Download
+    // MARK: - Download and Load
 
     func downloadModel() async throws {
         guard !state.isDownloading && !state.isReady else { return }
 
+        // Wrap download in a Task so we can cancel it
+        downloadTask = Task {
+            try await performDownloadWithRetry()
+        }
+
+        do {
+            try await downloadTask?.value
+        } catch is CancellationError {
+            // User cancelled - don't throw, just reset state
+            return
+        } catch {
+            throw error
+        }
+    }
+
+    private func performDownloadWithRetry() async throws {
+        var lastError: Error?
+
         // Create models directory
         try FileManager.default.createDirectory(at: modelsDirectory, withIntermediateDirectories: true)
 
-        state = .downloading(progress: 0)
-        downloadProgress = 0
+        for attempt in 1...maxRetryAttempts {
+            // Check for cancellation before each attempt
+            try Task.checkCancellation()
 
-        // Create optimized download session
-        // Using ephemeral config avoids disk caching overhead during download
-        let config = URLSessionConfiguration.ephemeral
-        config.httpMaximumConnectionsPerHost = 6
-        config.timeoutIntervalForRequest = 30
-        config.timeoutIntervalForResource = 600 // 10 minutes max for full download
-        config.httpShouldUsePipelining = true
+            // Only reset progress to 0 on first attempt
+            if attempt == 1 {
+                state = .downloading(progress: 0)
+                downloadProgress = 0
+            } else {
+                // On retry, show retrying state but preserve last progress
+                state = .retrying(attempt: attempt, maxAttempts: maxRetryAttempts)
+            }
 
-        // Using nil for delegateQueue lets callbacks run on URLSession's background queue
-        // The Task { @MainActor in } pattern in delegate methods properly hops to main actor
-        downloadSession = URLSession(configuration: config, delegate: self, delegateQueue: nil)
+            do {
+                let modelFolder = try await WhisperKit.download(
+                    variant: modelName,
+                    from: modelRepo,
+                    progressCallback: { [weak self] progress in
+                        Task { @MainActor [weak self] in
+                            guard let self else { return }
+                            self.downloadProgress = progress.fractionCompleted
+                            self.state = .downloading(progress: progress.fractionCompleted)
+                        }
+                    }
+                )
 
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            self.downloadContinuation = continuation
-            self.downloadTask = self.downloadSession?.downloadTask(with: self.modelURL)
-            self.downloadTask?.resume()
+                // Check cancellation after download completes
+                try Task.checkCancellation()
+
+                // Move to our app's model directory if needed
+                let destinationPath = modelPath
+                if modelFolder.path != destinationPath.path {
+                    try? FileManager.default.removeItem(at: destinationPath)
+                    try FileManager.default.createDirectory(
+                        at: modelsDirectory,
+                        withIntermediateDirectories: true
+                    )
+                    try FileManager.default.copyItem(
+                        at: modelFolder,
+                        to: destinationPath
+                    )
+                }
+
+                state = .downloaded
+                downloadProgress = 1.0
+                return // Success - exit retry loop
+
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                lastError = error
+
+                // Don't retry on last attempt
+                if attempt < maxRetryAttempts {
+                    // Exponential backoff: 2s, 4s, 8s...
+                    let delay = initialRetryDelay * pow(2.0, Double(attempt - 1))
+                    state = .retrying(attempt: attempt + 1, maxAttempts: maxRetryAttempts)
+
+                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                }
+            }
         }
+
+        // All retries exhausted
+        state = .error(lastError?.localizedDescription ?? "Download failed after \(maxRetryAttempts) attempts")
+        throw ModelError.downloadFailed(lastError?.localizedDescription ?? "Download failed")
     }
 
     func cancelDownload() {
         downloadTask?.cancel()
         downloadTask = nil
-        downloadSession?.invalidateAndCancel()
-        downloadSession = nil
-        downloadContinuation?.resume(throwing: CancellationError())
-        downloadContinuation = nil
         state = .notDownloaded
         downloadProgress = 0
     }
@@ -154,7 +224,7 @@ class ModelManager: NSObject, ObservableObject {
 
     func loadModel() async throws {
         // Already loaded - return immediately
-        if whisperContext != nil {
+        if whisperKit != nil {
             state = .ready
             return
         }
@@ -164,40 +234,29 @@ class ModelManager: NSObject, ObservableObject {
             throw ModelError.modelNotDownloaded
         }
 
-        // Prevent concurrent loads
-        guard !isLoading else { return }
-        isLoading = true
-
         state = .loading
 
-        // Load model on background thread
-        let path = modelPath.path
-
         do {
-            let context = try await Task.detached(priority: .userInitiated) {
-                var params = whisper_context_default_params()
-                params.use_gpu = true // Enable Metal acceleration
-                guard let ctx = whisper_init_from_file_with_params(path, params) else {
-                    throw ModelError.loadFailed("whisper_init_from_file returned nil")
-                }
-                return ctx
-            }.value
+            // Initialize WhisperKit with our downloaded model
+            whisperKit = try await WhisperKit(
+                modelFolder: modelPath.path,
+                computeOptions: ModelComputeOptions(
+                    audioEncoderCompute: .cpuAndNeuralEngine,
+                    textDecoderCompute: .cpuAndNeuralEngine
+                ),
+                verbose: false,
+                prewarm: true
+            )
 
-            whisperContext = context
             state = .ready
-            isLoading = false
         } catch {
-            state = .error("Failed to load model")
-            isLoading = false
-            throw error
+            state = .error("Failed to load model: \(error.localizedDescription)")
+            throw ModelError.loadFailed(error.localizedDescription)
         }
     }
 
     func unloadModel() {
-        if let ctx = whisperContext {
-            whisper_free(ctx)
-            whisperContext = nil
-        }
+        whisperKit = nil
         if state == .ready {
             state = .downloaded
         }
@@ -206,58 +265,113 @@ class ModelManager: NSObject, ObservableObject {
     // MARK: - Transcription
 
     func transcribe(samples: [Float], language: String?) async throws -> String {
-        guard state.isReady, let ctx = whisperContext else {
+        guard state.isReady, let whisperKit else {
             throw ModelError.modelNotDownloaded
         }
 
-        // Configure whisper parameters - optimized for speed
-        var params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY)
-        params.print_progress = false
-        params.print_timestamps = false
-        params.print_special = false
-        params.translate = false
-        params.no_context = true
-        params.single_segment = false
-        params.temperature = 0.0 // More deterministic output
+        do {
+            let options = DecodingOptions(
+                task: .transcribe,
+                language: language,
+                temperature: 0.0,
+                temperatureFallbackCount: 0,
+                sampleLength: 224,  // WhisperKit's maximum allowed value (internal array limit)
+                usePrefillPrompt: false,
+                usePrefillCache: false,
+                clipTimestamps: [0],  // Ensure processing starts from beginning
+                suppressBlank: true,
+                supressTokens: nil,
+                compressionRatioThreshold: 2.4,
+                logProbThreshold: -1.0,
+                firstTokenLogProbThreshold: nil,
+                noSpeechThreshold: 0.6
+            )
 
-        // Speed optimizations
-        params.n_threads = Int32(min(ProcessInfo.processInfo.activeProcessorCount, 8))  // Use available cores (max 8)
-        params.audio_ctx = 0  // Auto audio context (let Whisper optimize)
-        params.suppress_blank = true  // Skip blank segments faster
+            let results = try await whisperKit.transcribe(
+                audioArray: samples,
+                decodeOptions: options
+            )
 
-        // Set language if specified (avoids auto-detection overhead)
-        var languagePtr: UnsafePointer<CChar>?
-        if let lang = language, !lang.isEmpty {
-            languagePtr = (lang as NSString).utf8String
-            params.language = languagePtr
-        } else {
-            params.language = nil // Auto-detect
+            // Combine all segment texts
+            let fullText = results.compactMap { $0.text }.joined(separator: " ")
+            return fullText.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+
+        } catch {
+            throw ModelError.transcriptionFailed(error.localizedDescription)
+        }
+    }
+
+    /// Streaming transcription - transcribes audio chunks and provides partial results
+    func transcribeStreaming(
+        audioStream: AsyncStream<[Float]>,
+        onPartialResult: @escaping (String) -> Void
+    ) async throws -> String {
+        guard state.isReady, let whisperKit else {
+            throw ModelError.modelNotDownloaded
         }
 
-        // Run transcription on background thread
-        let result: String = try await Task.detached(priority: .userInitiated) {
-            let status = samples.withUnsafeBufferPointer { ptr in
-                whisper_full(ctx, params, ptr.baseAddress, Int32(samples.count))
-            }
+        var accumulatedSamples: [Float] = []
+        var lastTranscription = ""
+        let chunkDuration: Int = 16000 // 1 second of audio at 16kHz
 
-            guard status == 0 else {
-                throw ModelError.loadFailed("Transcription failed with status \(status)")
-            }
+        for await samples in audioStream {
+            accumulatedSamples.append(contentsOf: samples)
 
-            // Collect segments
-            let nSegments = whisper_full_n_segments(ctx)
-            var fullText = ""
+            // Transcribe every ~1 second of accumulated audio
+            if accumulatedSamples.count >= chunkDuration {
+                do {
+                    let options = DecodingOptions(
+                        task: .transcribe,
+                        language: nil,  // Auto-detect for streaming
+                        temperature: 0.0,
+                        suppressBlank: true,
+                        noSpeechThreshold: 0.6
+                    )
 
-            for i in 0..<nSegments {
-                if let text = whisper_full_get_segment_text(ctx, i) {
-                    fullText += String(cString: text)
+                    let results = try await whisperKit.transcribe(
+                        audioArray: accumulatedSamples,
+                        decodeOptions: options
+                    )
+
+                    let text = results.compactMap { $0.text }.joined(separator: " ")
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+
+                    if !text.isEmpty && text != lastTranscription {
+                        lastTranscription = text
+                        await MainActor.run {
+                            onPartialResult(text)
+                        }
+                    }
+                } catch {
+                    // Continue streaming even if one chunk fails
                 }
             }
+        }
 
-            return fullText.trimmingCharacters(in: .whitespacesAndNewlines)
-        }.value
+        // Final transcription with all accumulated audio
+        if !accumulatedSamples.isEmpty {
+            do {
+                let options = DecodingOptions(
+                    task: .transcribe,
+                    language: nil,
+                    temperature: 0.0,
+                    suppressBlank: true,
+                    noSpeechThreshold: 0.6
+                )
 
-        return result
+                let results = try await whisperKit.transcribe(
+                    audioArray: accumulatedSamples,
+                    decodeOptions: options
+                )
+
+                lastTranscription = results.compactMap { $0.text }.joined(separator: " ")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            } catch {
+                // Return what we have
+            }
+        }
+
+        return lastTranscription
     }
 
     // MARK: - Delete Model
@@ -271,75 +385,12 @@ class ModelManager: NSObject, ObservableObject {
     // MARK: - Model Info
 
     var modelSizeDescription: String {
-        "~142 MB"
+        "~150 MB"  // Core ML optimized model
     }
 
     var isModelDownloaded: Bool {
         if case .downloaded = state { return true }
         if case .ready = state { return true }
         return false
-    }
-}
-
-// MARK: - URLSessionDownloadDelegate
-
-extension ModelManager: URLSessionDownloadDelegate {
-    nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
-        // CRITICAL: URLSession deletes the temp file immediately after this callback returns.
-        // We MUST move the file synchronously here - not inside a Task or async block.
-        let fileManager = FileManager.default
-        let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let destinationDir = appSupport.appendingPathComponent("Fluent/Models", isDirectory: true)
-        let destinationPath = destinationDir.appendingPathComponent("ggml-base.bin")
-
-        do {
-            // Ensure directory exists
-            try fileManager.createDirectory(at: destinationDir, withIntermediateDirectories: true)
-
-            // Remove existing file if present
-            if fileManager.fileExists(atPath: destinationPath.path) {
-                try fileManager.removeItem(at: destinationPath)
-            }
-
-            // Move file synchronously (before URLSession deletes it)
-            try fileManager.moveItem(at: location, to: destinationPath)
-
-            // Now dispatch UI/state updates to MainActor
-            Task { @MainActor in
-                self.state = .downloaded
-                self.downloadProgress = 1.0
-                self.downloadContinuation?.resume()
-                self.downloadContinuation = nil
-            }
-        } catch {
-            Task { @MainActor in
-                self.state = .error(error.localizedDescription)
-                self.downloadContinuation?.resume(throwing: ModelError.downloadFailed(error.localizedDescription))
-                self.downloadContinuation = nil
-            }
-        }
-    }
-
-    nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
-        Task { @MainActor in
-            let expected = totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : expectedModelSize
-            let progress = Double(totalBytesWritten) / Double(expected)
-            downloadProgress = min(progress, 1.0)
-            state = .downloading(progress: downloadProgress)
-        }
-    }
-
-    nonisolated func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        Task { @MainActor in
-            if let error = error {
-                if (error as NSError).code == NSURLErrorCancelled {
-                    // Cancelled - already handled
-                    return
-                }
-                state = .error(error.localizedDescription)
-                downloadContinuation?.resume(throwing: ModelError.downloadFailed(error.localizedDescription))
-                downloadContinuation = nil
-            }
-        }
     }
 }

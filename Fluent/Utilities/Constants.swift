@@ -5,18 +5,18 @@ enum Constants {
     static let bundleIdentifier = "com.fluent.app"
 
     enum Model {
-        // Whisper base model from HuggingFace (~142MB)
-        static let downloadURL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin"
-        static let fileName = "ggml-base.bin"
-        static let expectedSize: Int64 = 142_000_000 // ~142MB
+        // WhisperKit Core ML model (~150MB)
+        static let modelName = "small"
+        static let modelRepo = "argmaxinc/whisperkit-coreml"
+        static let expectedSize: Int64 = 150_000_000 // ~150MB
     }
 
     enum Audio {
         static let defaultSampleRate: Double = 44100
         static let defaultChannels: UInt32 = 1
-        static let bufferSize: UInt32 = 1024
+        static let bufferSize: UInt32 = 4096  // Larger buffer for streaming
 
-        // whisper.cpp requirements
+        // WhisperKit requirements (same as whisper.cpp)
         static let whisperSampleRate: Double = 16000
         static let whisperChannels: UInt32 = 1
     }

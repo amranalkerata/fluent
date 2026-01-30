@@ -54,6 +54,10 @@ class AudioRecordingService: ObservableObject {
     private var allLevelSamples: [Float] = []
     private static let silenceThreshold: Float = 0.05
 
+    // Streaming audio support for real-time transcription
+    private var audioBufferContinuation: AsyncStream<[Float]>.Continuation?
+    private(set) var audioStream: AsyncStream<[Float]>?
+
     init() {
         setupLevelSmoothing()
     }
@@ -126,8 +130,13 @@ class AudioRecordingService: ObservableObject {
             throw RecordingError.fileCreationFailed
         }
 
+        // Create async stream for real-time audio samples (for streaming transcription)
+        audioStream = AsyncStream { continuation in
+            self.audioBufferContinuation = continuation
+        }
+
         // Install tap for recording and level monitoring
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
+        inputNode.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
             guard let self = self else { return }
 
             // Write to file
@@ -143,6 +152,11 @@ class AudioRecordingService: ObservableObject {
 
             // Collect levels for silence detection
             self.allLevelSamples.append(level)
+
+            // Stream PCM samples for real-time transcription
+            if let samples = self.convertToWhisperFormat(buffer: buffer, sourceFormat: format) {
+                self.audioBufferContinuation?.yield(samples)
+            }
         }
 
         // Start engine
@@ -163,6 +177,11 @@ class AudioRecordingService: ObservableObject {
 
     func stopRecording() async -> URL? {
         guard isRecording else { return nil }
+
+        // Finish the audio stream for transcription
+        audioBufferContinuation?.finish()
+        audioBufferContinuation = nil
+        audioStream = nil
 
         audioEngine?.inputNode.removeTap(onBus: 0)
         audioEngine?.stop()
@@ -212,6 +231,52 @@ class AudioRecordingService: ObservableObject {
     /// Checks if the recording has sufficient audio activity (not just silence)
     func hasSpeechActivity() -> Bool {
         return getAverageLevel() >= Self.silenceThreshold
+    }
+
+    // MARK: - Audio Format Conversion
+
+    /// Convert audio buffer to 16kHz mono Float32 for WhisperKit
+    private func convertToWhisperFormat(buffer: AVAudioPCMBuffer, sourceFormat: AVAudioFormat) -> [Float]? {
+        guard let channelData = buffer.floatChannelData?[0] else { return nil }
+        let frameLength = Int(buffer.frameLength)
+        guard frameLength > 0 else { return nil }
+
+        // Get source samples
+        var sourceSamples = [Float](repeating: 0, count: frameLength)
+        memcpy(&sourceSamples, channelData, frameLength * MemoryLayout<Float>.size)
+
+        // If stereo, convert to mono by averaging channels
+        if sourceFormat.channelCount > 1, let rightChannel = buffer.floatChannelData?[1] {
+            for i in 0..<frameLength {
+                sourceSamples[i] = (sourceSamples[i] + rightChannel[i]) / 2.0
+            }
+        }
+
+        // Resample to 16kHz if needed
+        let sourceSampleRate = sourceFormat.sampleRate
+        let targetSampleRate: Double = 16000
+
+        if abs(sourceSampleRate - targetSampleRate) < 1.0 {
+            // Already at target sample rate
+            return sourceSamples
+        }
+
+        // Simple linear interpolation resampling
+        let ratio = sourceSampleRate / targetSampleRate
+        let outputLength = Int(Double(frameLength) / ratio)
+        var outputSamples = [Float](repeating: 0, count: outputLength)
+
+        for i in 0..<outputLength {
+            let srcIndex = Double(i) * ratio
+            let srcIndexFloor = Int(srcIndex)
+            let srcIndexCeil = min(srcIndexFloor + 1, frameLength - 1)
+            let fraction = Float(srcIndex - Double(srcIndexFloor))
+
+            outputSamples[i] = sourceSamples[srcIndexFloor] * (1 - fraction) +
+                               sourceSamples[srcIndexCeil] * fraction
+        }
+
+        return outputSamples
     }
 
     // MARK: - Audio Level Calculation
