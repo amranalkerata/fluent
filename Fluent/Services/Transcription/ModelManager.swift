@@ -270,14 +270,20 @@ class ModelManager: ObservableObject {
         }
 
         do {
+            // Always enable prefill to ensure the <|transcribe|> task token is included.
+            // Without prefill, WhisperKit defaults to translate mode for non-English audio,
+            // causing Arabic speech to output English translation instead of Arabic text.
+            // Language detection still works with prefill enabled - WhisperKit detects
+            // the language first, then prefills with correct language + task tokens.
             let options = DecodingOptions(
                 task: .transcribe,
                 language: language,
                 temperature: 0.0,
                 temperatureFallbackCount: 0,
                 sampleLength: 224,  // WhisperKit's maximum allowed value (internal array limit)
-                usePrefillPrompt: false,
-                usePrefillCache: false,
+                usePrefillPrompt: true,        // Always enable to inject <|transcribe|> task token
+                usePrefillCache: true,         // Cache prefill for consistency across chunks
+                detectLanguage: language == nil,  // Auto-detect only if no explicit language
                 clipTimestamps: [0],  // Ensure processing starts from beginning
                 suppressBlank: true,
                 supressTokens: nil,
@@ -304,6 +310,7 @@ class ModelManager: ObservableObject {
     /// Streaming transcription - transcribes audio chunks and provides partial results
     func transcribeStreaming(
         audioStream: AsyncStream<[Float]>,
+        language: String?,
         onPartialResult: @escaping (String) -> Void
     ) async throws -> String {
         guard state.isReady, let whisperKit else {
@@ -320,10 +327,14 @@ class ModelManager: ObservableObject {
             // Transcribe every ~1 second of accumulated audio
             if accumulatedSamples.count >= chunkDuration {
                 do {
+                    // Always enable prefill to ensure <|transcribe|> task token is set
                     let options = DecodingOptions(
                         task: .transcribe,
-                        language: nil,  // Auto-detect for streaming
+                        language: language,
                         temperature: 0.0,
+                        usePrefillPrompt: true,
+                        usePrefillCache: true,
+                        detectLanguage: language == nil,
                         suppressBlank: true,
                         noSpeechThreshold: 0.6
                     )
@@ -334,7 +345,7 @@ class ModelManager: ObservableObject {
                     )
 
                     let text = results.compactMap { $0.text }.joined(separator: " ")
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                        .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
 
                     if !text.isEmpty && text != lastTranscription {
                         lastTranscription = text
@@ -351,10 +362,14 @@ class ModelManager: ObservableObject {
         // Final transcription with all accumulated audio
         if !accumulatedSamples.isEmpty {
             do {
+                // Always enable prefill to ensure <|transcribe|> task token is set
                 let options = DecodingOptions(
                     task: .transcribe,
-                    language: nil,
+                    language: language,
                     temperature: 0.0,
+                    usePrefillPrompt: true,
+                    usePrefillCache: true,
+                    detectLanguage: language == nil,
                     suppressBlank: true,
                     noSpeechThreshold: 0.6
                 )
@@ -365,7 +380,7 @@ class ModelManager: ObservableObject {
                 )
 
                 lastTranscription = results.compactMap { $0.text }.joined(separator: " ")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
             } catch {
                 // Return what we have
             }

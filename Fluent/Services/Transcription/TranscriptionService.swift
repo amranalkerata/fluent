@@ -69,8 +69,13 @@ class TranscriptionService {
             throw TranscriptionError.modelNotReady
         }
 
+        // Get language setting - same logic as transcribe(audioURL:)
+        let language = settingsService.settings.language.rawValue
+        let languageCode: String? = language.isEmpty ? nil : language
+
         let result = try await modelManager.transcribeStreaming(
             audioStream: audioStream,
+            language: languageCode,
             onPartialResult: { partial in
                 // Filter out hallucinations from partial results
                 if !self.isHallucination(partial) {
