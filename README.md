@@ -6,13 +6,15 @@
 ![Swift 5.9+](https://img.shields.io/badge/Swift-5.9%2B-orange)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-Fluent is a lightweight, native macOS app that turns your voice into text instantly. Press a hotkey, speak, and your words are transcribed and pasted wherever your cursor is. Powered by OpenAI's Whisper for accurate transcription and optional GPT-4 enhancement for polished output.
+Fluent is a lightweight, native macOS app that turns your voice into text instantly. Press a hotkey, speak, and your words are transcribed and pasted wherever your cursor is. Powered by WhisperKit for accurate on-device transcription with local AI formatting for polished output — no cloud services required.
 
 ## Features
 
+- **100% Local Processing** — All transcription happens on your device, no cloud services required
 - **Global Hotkeys** — Start recording from anywhere with `Fn` or `Option+Space`
-- **AI Transcription** — Accurate speech-to-text using OpenAI Whisper
-- **Smart Enhancement** — Optional GPT-4 mini post-processing for punctuation and clarity
+- **AI Transcription** — Accurate speech-to-text using WhisperKit (on-device)
+- **Smart Formatting** — Local AI adds punctuation and proper capitalization
+- **Privacy-First** — Your voice never leaves your Mac
 - **Auto-Paste** — Transcribed text automatically pastes at your cursor
 - **Recording History** — Searchable history of all your transcriptions
 - **Visual Feedback** — Floating overlay with real-time waveform visualization
@@ -23,7 +25,8 @@ Fluent is a lightweight, native macOS app that turns your voice into text instan
 ## System Requirements
 
 - **macOS 14.0** (Sonoma) or later
-- **OpenAI API Key** — Required for transcription ([Get one here](https://platform.openai.com/api-keys))
+- **Apple Silicon or Intel Mac** — Core ML optimized for best performance
+- **~350 MB disk space** — For AI models (downloaded during setup)
 - **Microphone Permission** — For voice recording
 - **Input Monitoring Permission** — For global keyboard shortcuts
 
@@ -62,14 +65,16 @@ On first launch, Fluent will request the following permissions:
 | **Input Monitoring** | Detect global hotkeys | System Settings → Privacy & Security → Input Monitoring → Enable Fluent |
 | **Accessibility** (Optional) | Enhanced paste functionality | System Settings → Privacy & Security → Accessibility → Enable Fluent |
 
-### 2. Add Your OpenAI API Key
+### 2. Download AI Models
 
-1. Get an API key from [OpenAI Platform](https://platform.openai.com/api-keys)
-2. Open Fluent and go to **Settings**
-3. Paste your API key in the "OpenAI API Key" field
-4. Click **Save** — the key is validated and stored securely in your macOS Keychain
+During the onboarding process, Fluent will download the required AI models:
 
-> Your API key never leaves your device except for API calls to OpenAI.
+1. **Welcome** — Introduction to Fluent
+2. **Permissions** — Grant microphone and input monitoring access
+3. **Model Download** — WhisperKit transcription model (~350 MB) downloads automatically
+4. **Ready** — You're all set to start dictating
+
+> Models are downloaded once and stored locally. No internet connection is required after initial setup.
 
 ## Usage
 
@@ -100,7 +105,8 @@ On first launch, Fluent will request the following permissions:
 | Setting | Description |
 |---------|-------------|
 | **Language** | Transcription language (or auto-detect) |
-| **GPT Enhancement** | Enable AI-powered text cleanup |
+| **Text Formatting** | Enable AI-powered punctuation and capitalization |
+| **List Formatting** | Format spoken lists as bullet points |
 | **Auto-Paste** | Automatically paste transcribed text |
 | **Audio Quality** | Low / Medium / High recording quality |
 | **Launch at Login** | Start Fluent when you log in |
@@ -110,7 +116,7 @@ On first launch, Fluent will request the following permissions:
 - View all past recordings in the **History** tab
 - Search by transcription text
 - See recording duration, timestamp, and target app
-- Compare original vs. enhanced transcriptions
+- Compare original vs. formatted transcriptions
 
 ## Technical Details
 
@@ -121,10 +127,11 @@ Fluent/
 ├── App/              # Application core (AppState, AppDelegate)
 ├── Models/           # Data models (Recording, Settings, Shortcuts)
 ├── Services/         # Business logic
-│   ├── Audio/        # Recording service
-│   ├── Transcription/# Whisper & GPT services
+│   ├── Audio/        # Recording & AudioConverter
+│   ├── Transcription/# WhisperKit & Punctuation services
+│   ├── Model/        # ModelManager, PunctuationModelManager
 │   ├── Hotkey/       # Global shortcut handling
-│   ├── Storage/      # Keychain, SwiftData, Settings
+│   ├── Storage/      # SwiftData, Settings
 │   └── System/       # Paste, Permissions
 ├── Views/            # SwiftUI interface
 └── Theme/            # Design system components
@@ -136,8 +143,9 @@ Fluent/
 - **SwiftData** — Local recording history storage
 - **AVFoundation** — Audio recording
 - **CGEvent** — Global keyboard event monitoring
-- **OpenAI Whisper API** — Speech-to-text transcription
-- **OpenAI GPT-4 mini** — Text enhancement
+- **WhisperKit** — On-device speech-to-text (Core ML)
+- **ONNX Runtime** — Local punctuation model inference
+- **SentencePiece** — Text tokenization for punctuation model
 
 ### Audio Specifications
 
@@ -152,16 +160,17 @@ Fluent/
 | Data | Location |
 |------|----------|
 | Recordings database | SwiftData (app container) |
-| Audio files | `~/Documents/Fluent/` |
-| API key | macOS Keychain |
+| WhisperKit models | `~/Library/Application Support/Fluent/WhisperKitModels/` |
+| Punctuation model | `~/Library/Application Support/Fluent/PunctuationModel/` |
 | Settings | UserDefaults |
 
 ## Privacy & Security
 
-- **API Key Security** — Stored in macOS Keychain, never in plain text
-- **Local Processing** — Audio files and history stay on your device
+- **100% Local Processing** — All transcription and formatting happens on your device
+- **No Internet Required** — After initial model download, works completely offline
+- **No Cloud Services** — Your voice data never leaves your Mac
 - **No Analytics** — No tracking, telemetry, or data collection
-- **No Cloud Sync** — All data remains local to your Mac
+- **No Account Required** — No sign-up, no API keys, no subscriptions
 - **Minimal Permissions** — Only requests what's necessary
 
 ## Troubleshooting
@@ -173,12 +182,19 @@ Fluent/
 3. Try removing and re-adding Fluent if issues persist
 4. Restart Fluent after granting permissions
 
-### Transcription fails
+### Transcription model not loading
 
-1. Check your API key is valid in **Settings**
-2. Verify your OpenAI account has available credits
-3. Ensure you have an internet connection
-4. Check the audio file was recorded (visible in History)
+1. Check that models exist in `~/Library/Application Support/Fluent/WhisperKitModels/`
+2. Delete the models folder and restart Fluent to re-download
+3. Ensure you have at least 500 MB of free disk space
+4. Check your internet connection during initial model download
+
+### Model download fails
+
+1. Verify you have an active internet connection
+2. Check available disk space (~350 MB required)
+3. Try restarting Fluent to resume the download
+4. Check Console.app for detailed error messages
 
 ### Recording not starting
 
@@ -226,9 +242,12 @@ This project is licensed under the MIT License — see the [LICENSE](LICENSE) fi
 
 ## Acknowledgments
 
-- [OpenAI](https://openai.com) for Whisper and GPT APIs
+- [WhisperKit](https://github.com/argmaxinc/WhisperKit) by Argmax for on-device speech recognition
+- [ONNX Runtime](https://onnxruntime.ai/) by Microsoft for local model inference
+- [SentencePiece](https://github.com/google/sentencepiece) by Google for text tokenization
+- Punctuation model based on research in neural text processing
 - Built with SwiftUI and SwiftData
 
 ---
 
-**Made with ❤️ for the macOS community**
+**Made with love for the macOS community**
