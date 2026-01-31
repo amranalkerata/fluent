@@ -42,7 +42,7 @@ Fluent is a lightweight, native macOS app that turns your voice into text instan
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/fluent.git
+git clone https://github.com/amranalkerata/fluent
 cd fluent
 
 # Open in Xcode
@@ -250,4 +250,4 @@ This project is licensed under the MIT License — see the [LICENSE](LICENSE) fi
 
 ---
 
-**Made with love for the macOS community**
+**Made with love ❤️ for the macOS community**
