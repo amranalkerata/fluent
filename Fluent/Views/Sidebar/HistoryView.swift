@@ -56,8 +56,7 @@ struct HistoryView: View {
                                         .contextMenu {
                                             Button("Copy Transcription") {
                                                 if let text = recording.transcription {
-                                                    NSPasteboard.general.clearContents()
-                                                    NSPasteboard.general.setString(text, forType: .string)
+                                                    PasteService.shared.copyToClipboard(text)
                                                 }
                                             }
                                             .disabled(recording.transcription == nil)
@@ -263,8 +262,7 @@ struct RecordingDetailView: View {
 
     private func copyTranscription() {
         guard let text = recording.transcription else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
+        PasteService.shared.copyToClipboard(text)
 
         withAnimation(FluentAnimation.fast) {
             showCopiedAlert = true

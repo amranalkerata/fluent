@@ -15,15 +15,15 @@ enum RecordingError: LocalizedError {
         case .microphonePermissionDenied:
             return "Microphone access was denied. Please enable it in System Settings > Privacy & Security > Microphone."
         case .audioEngineStartFailed:
-            return "Failed to start audio recording. Please check your audio input device."
+            return "Failed to start audio recording."
         case .fileCreationFailed:
             return "Failed to create audio file for recording."
         case .noInputDevice:
-            return "No audio input device found. Please connect a microphone."
+            return "No audio input device found"
         case .recordingTooShort:
-            return "Recording too short. Please hold for at least one second."
+            return "Recording too short."
         case .noSpeechDetected:
-            return "Couldn't detect anything. Please try again."
+            return "Couldn't detect anything."
         }
     }
 }

@@ -15,8 +15,9 @@ struct RecordingOverlayView: View {
                     Text(appState.transcriptionError ?? "Loading model, please wait...")
                         .font(.Fluent.caption)
                         .foregroundStyle(FluentColors.textSecondary)
-                        .lineLimit(2)
+                        .lineLimit(1)
                 }
+                .fixedSize()
             } else if appState.isRecording {
                 // Recording UI
                 HStack(spacing: FluentSpacing.sm) {
@@ -55,6 +56,7 @@ struct RecordingOverlayView: View {
                         .font(.Fluent.caption)
                         .foregroundStyle(FluentColors.textSecondary)
                 }
+                .fixedSize()
             } else if let error = appState.transcriptionError {
                 // Error UI - shows briefly before overlay hides
                 HStack(spacing: FluentSpacing.sm) {
@@ -66,9 +68,9 @@ struct RecordingOverlayView: View {
                         .foregroundStyle(FluentColors.textSecondary)
                         .lineLimit(1)
                 }
+                .fixedSize()
             }
         }
-        .frame(minWidth: 280)
         .padding(.horizontal, FluentSpacing.md)
         .padding(.vertical, FluentSpacing.sm)
         .background(

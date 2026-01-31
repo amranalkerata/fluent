@@ -1,5 +1,4 @@
 import AppKit
-import Carbon.HIToolbox
 
 class PasteService {
     static let shared = PasteService()
@@ -10,7 +9,10 @@ class PasteService {
 
     private init() {}
 
-    /// Copy text to clipboard and optionally paste it
+    /// Paste text directly or copy to clipboard
+    /// - Parameters:
+    ///   - text: The text to paste or copy
+    ///   - autoPaste: If true, inject text directly without using clipboard. If false, just copy to clipboard.
     func pasteText(_ text: String, autoPaste: Bool = true) {
         // Prevent rapid-fire paste operations
         let now = Date()
@@ -30,59 +32,65 @@ class PasteService {
         isPasting = true
         lastPasteTime = now
 
-        // 1. Save old clipboard content (to restore if paste fails)
-        let pasteboard = NSPasteboard.general
-        let oldContent = pasteboard.string(forType: .string)
-
-        // 2. Clear and set new content
-        pasteboard.clearContents()
-        let success = pasteboard.setString(text, forType: .string)
-
-        guard success else {
-            isPasting = false
-            return
-        }
-
-        // 3. Auto-paste if enabled
         if autoPaste {
-            // Verify clipboard update with retries, then paste
-            verifyClipboardAndPaste(expectedText: text, oldContent: oldContent, retries: 3)
+            // Direct injection - never touches clipboard
+            injectTextDirectly(text)
         } else {
+            // Explicit copy request - use clipboard
+            copyToClipboard(text)
             isPasting = false
         }
     }
 
-    /// Verify clipboard contains expected text before pasting
-    private func verifyClipboardAndPaste(expectedText: String, oldContent: String?, retries: Int) {
-        let pasteboard = NSPasteboard.general
+    /// Inject text directly into the focused application using CGEvent
+    /// This bypasses the clipboard entirely, preserving whatever the user had copied
+    private func injectTextDirectly(_ text: String) {
+        guard let source = CGEventSource(stateID: .hidSystemState) else {
+            isPasting = false
+            return
+        }
 
-        // Check if clipboard has the expected content
-        if let currentContent = pasteboard.string(forType: .string),
-           currentContent == expectedText {
-            // Clipboard is correct, proceed with paste
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-                self?.simulatePaste()
-                // Restore old clipboard and reset paste lock after paste completes
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                    if let old = oldContent {
-                        let pasteboard = NSPasteboard.general
-                        pasteboard.clearContents()
-                        pasteboard.setString(old, forType: .string)
-                    }
-                    self?.isPasting = false
-                }
-            }
-        } else if retries > 0 {
-            // Retry after a short delay
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-                self?.verifyClipboardAndPaste(expectedText: expectedText, oldContent: oldContent, retries: retries - 1)
-            }
+        // CGEventKeyboardSetUnicodeString has a limit of ~20 characters per event
+        // For longer text, we need to chunk it
+        let maxChunkSize = 20
+        let utf16Chars = Array(text.utf16)
+
+        // Small delay to ensure target app is ready
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            self?.injectChunks(utf16Chars: utf16Chars, maxChunkSize: maxChunkSize, source: source, index: 0)
+        }
+    }
+
+    /// Recursively inject text in chunks (CGEvent has a ~20 char limit per event)
+    private func injectChunks(utf16Chars: [UInt16], maxChunkSize: Int, source: CGEventSource, index: Int) {
+        guard index < utf16Chars.count else {
+            // All chunks processed
+            isPasting = false
+            return
+        }
+
+        let endIndex = min(index + maxChunkSize, utf16Chars.count)
+        var chunk = Array(utf16Chars[index..<endIndex])
+
+        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
+              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) else {
+            isPasting = false
+            return
+        }
+
+        keyDown.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: &chunk)
+        keyDown.post(tap: .cghidEventTap)
+
+        // Brief delay between key events
+        usleep(1000) // 1ms
+
+        keyUp.post(tap: .cghidEventTap)
+
+        // Process next chunk after a small delay
+        if endIndex < utf16Chars.count {
+            usleep(2000) // 2ms between chunks
+            injectChunks(utf16Chars: utf16Chars, maxChunkSize: maxChunkSize, source: source, index: endIndex)
         } else {
-            // Failed after all retries - restore old clipboard content
-            if let old = oldContent {
-                pasteboard.clearContents()
-                pasteboard.setString(old, forType: .string)
-            }
             isPasting = false
         }
     }
@@ -92,34 +100,6 @@ class PasteService {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
-    }
-
-    /// Simulate Cmd+V keystroke to paste
-    private func simulatePaste() {
-        guard let source = CGEventSource(stateID: .hidSystemState) else {
-            return
-        }
-
-        // V key virtual key code is 9
-        let vKeyCode: CGKeyCode = CGKeyCode(kVK_ANSI_V)
-
-        // Create key down event with Command modifier
-        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: vKeyCode, keyDown: true),
-              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: vKeyCode, keyDown: false) else {
-            return
-        }
-
-        // Set Command modifier
-        keyDown.flags = .maskCommand
-        keyUp.flags = .maskCommand
-
-        // Post events to the system
-        keyDown.post(tap: .cghidEventTap)
-
-        // Small delay between key down and up
-        usleep(10000) // 10ms
-
-        keyUp.post(tap: .cghidEventTap)
     }
 
     /// Get the name of the currently focused application

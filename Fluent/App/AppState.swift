@@ -187,8 +187,8 @@ class AppState: ObservableObject {
         Task {
             do {
                 try await audioService.startRecording()
-                SystemAudioService.shared.muteForRecording()
-                SoundService.shared.playRecordingSound()
+                SoundService.shared.playRecordingSound()       // Play sound first (while unmuted)
+                SystemAudioService.shared.muteForRecording()   // Then mute for recording
                 // Show overlay
                 NotificationCenter.default.post(name: .showRecordingOverlay, object: self)
                 // Note: Streaming transcription removed - file-based transcription is faster
@@ -215,7 +215,8 @@ class AppState: ObservableObject {
             let duration = recordingDuration
 
             recordingURL = await audioService.stopRecording()
-            SoundService.shared.playRecordingSound()
+            SystemAudioService.shared.restoreAfterRecording()  // Unmute first
+            SoundService.shared.playRecordingSound()           // Then play sound (now audible)
             // Don't hide overlay yet - let it show processing state
 
             if let url = recordingURL {
@@ -249,7 +250,8 @@ class AppState: ObservableObject {
     }
 
     private func cleanupAfterRecording() {
-        SystemAudioService.shared.restoreAfterRecording()
+        // Note: restoreAfterRecording() is now called immediately in stopRecording()
+        // so the stop sound can play while unmuted
         partialTranscription = nil
         isStoppingRecording = false
         workflowInProgress = false
@@ -260,6 +262,7 @@ class AppState: ObservableObject {
 
         Task {
             _ = await audioService.stopRecording()
+            SystemAudioService.shared.restoreAfterRecording()  // Unmute on cancel
             NotificationCenter.default.post(name: .hideRecordingOverlay, object: nil)
             // Don't transcribe, just discard - release all locks
             cleanupAfterRecording()
