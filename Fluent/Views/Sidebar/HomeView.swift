@@ -68,20 +68,29 @@ struct HomeView: View {
                     ZStack {
                         Circle()
                             .fill(
-                                appState.isRecording
-                                    ? FluentColors.error.gradient
-                                    : FluentColors.primary.gradient
+                                appState.isModelLoading
+                                    ? FluentColors.primary.opacity(0.3).gradient
+                                    : appState.isRecording
+                                        ? FluentColors.error.gradient
+                                        : FluentColors.primary.gradient
                             )
                             .frame(width: 80, height: 80)
 
-                        Image(systemName: appState.isRecording ? "stop.fill" : "mic.fill")
-                            .font(.system(size: 32))
-                            .foregroundStyle(.white)
+                        if appState.isModelLoading {
+                            ProgressView()
+                                .progressViewStyle(.circular)
+                                .scaleEffect(1.2)
+                                .tint(.white)
+                        } else {
+                            Image(systemName: appState.isRecording ? "stop.fill" : "mic.fill")
+                                .font(.system(size: 32))
+                                .foregroundStyle(.white)
+                        }
                     }
 
-                    Text(appState.isRecording ? "Stop Recording" : "Start Recording")
+                    Text(appState.isModelLoading ? "Loading Model..." : appState.isRecording ? "Stop Recording" : "Start Recording")
                         .font(.Fluent.titleMedium)
-                        .foregroundStyle(FluentColors.textPrimary)
+                        .foregroundStyle(appState.isModelLoading ? FluentColors.textSecondary : FluentColors.textPrimary)
                 }
                 .padding(FluentSpacing.xl)
                 .frame(maxWidth: .infinity)
@@ -89,22 +98,33 @@ struct HomeView: View {
                     RoundedRectangle(cornerRadius: FluentRadius.xl)
                         .fill(FluentColors.surface)
                 )
-                .fluentShadow(isRecordButtonHovered ? .medium : .low)
-                .scaleEffect(isRecordButtonPressed ? 0.97 : (isRecordButtonHovered ? 1.01 : 1.0))
+                .fluentShadow(appState.isModelLoading ? .low : (isRecordButtonHovered ? .medium : .low))
+                .scaleEffect(appState.isModelLoading ? 1.0 : (isRecordButtonPressed ? 0.97 : (isRecordButtonHovered ? 1.01 : 1.0)))
             }
             .buttonStyle(.plain)
-            .onHover { isRecordButtonHovered = $0 }
+            .disabled(appState.isModelLoading)
+            .onHover { hovering in
+                if !appState.isModelLoading {
+                    isRecordButtonHovered = hovering
+                }
+            }
             .simultaneousGesture(
                 DragGesture(minimumDistance: 0)
-                    .onChanged { _ in isRecordButtonPressed = true }
+                    .onChanged { _ in
+                        if !appState.isModelLoading {
+                            isRecordButtonPressed = true
+                        }
+                    }
                     .onEnded { _ in isRecordButtonPressed = false }
             )
             .animation(FluentAnimation.spring, value: isRecordButtonHovered)
             .animation(FluentAnimation.spring, value: isRecordButtonPressed)
+            .animation(FluentAnimation.normal, value: appState.isModelLoading)
 
-            Text("Press Fn or ⌥Space to record")
+            Text(appState.isModelLoading ? "Please wait, preparing transcription..." : "Press Fn or ⌥Space to record")
                 .font(.Fluent.caption)
                 .foregroundStyle(FluentColors.textTertiary)
+                .animation(FluentAnimation.normal, value: appState.isModelLoading)
         }
         .padding(.vertical, FluentSpacing.lg)
     }

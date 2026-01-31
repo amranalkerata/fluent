@@ -12,7 +12,18 @@ class AppState: ObservableObject {
     @Published var isTranscribing = false
     @Published var transcriptionError: String?
     @Published var partialTranscription: String?  // Real-time transcription during recording
-    @Published var isModelLoading = false  // Track model loading state for UI feedback
+    @Published var isShowingLoadingOverlay = false  // Show floating bar with loading message
+
+    /// Computed property that reflects the actual model loading state from ModelManager
+    var isModelLoading: Bool {
+        let state = ModelManager.shared.state
+        switch state {
+        case .loading, .downloading, .retrying, .downloaded:
+            return true
+        case .ready, .notDownloaded, .error:
+            return false
+        }
+    }
 
     // MARK: - UI State
     @Published var selectedSidebarItem: SidebarItem = .home
@@ -47,6 +58,14 @@ class AppState: ObservableObject {
         audioService.$recordingDuration
             .receive(on: DispatchQueue.main)
             .assign(to: &$recordingDuration)
+
+        // Observe ModelManager.state changes to trigger UI updates for isModelLoading
+        ModelManager.shared.$state
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+            }
+            .store(in: &cancellables)
     }
 
     private func setupNotificationObservers() {
@@ -67,24 +86,44 @@ class AppState: ObservableObject {
     }
 
     private func checkOnboardingStatus() {
-        // Show onboarding if not completed or model not downloaded
-        if !SettingsService.shared.isOnboardingComplete || !ModelManager.shared.isModelDownloaded {
+        // Show onboarding if not completed or either model not downloaded
+        let whisperReady = ModelManager.shared.isModelDownloaded
+        let punctuationReady = PunctuationModelManager.shared.isModelDownloaded
+
+        if !SettingsService.shared.isOnboardingComplete || !whisperReady || !punctuationReady {
             showOnboarding = true
         } else {
-            // Load model on app start and track completion
-            loadModelOnStartup()
+            // Load models on app start and track completion
+            loadModelsOnStartup()
         }
     }
 
-    private func loadModelOnStartup() {
-        isModelLoading = true
+    private func loadModelsOnStartup() {
+        // isModelLoading is now a computed property based on ModelManager.state
+        // No need to set it manually - it automatically reflects the true state
         Task {
+            // Load Whisper model
             do {
                 try await ModelManager.shared.loadModel()
             } catch {
-                transcriptionError = "Failed to load model: \(error.localizedDescription)"
+                transcriptionError = "Failed to load Whisper model: \(error.localizedDescription)"
             }
-            isModelLoading = false
+
+            // Load punctuation model if format text is enabled
+            // Model is already downloaded during onboarding, just need to load from disk
+            if settingsService.settings.formatTextEnabled {
+                try? await PunctuationModelManager.shared.loadModel()
+            }
+        }
+    }
+
+    /// Load punctuation model on demand (called when format text setting is toggled on)
+    func loadPunctuationModelIfNeeded() {
+        guard settingsService.settings.formatTextEnabled else { return }
+        guard PunctuationModelManager.shared.isModelDownloaded else { return }
+
+        Task {
+            try? await PunctuationModelManager.shared.loadModel()
         }
     }
 
@@ -130,12 +169,14 @@ class AppState: ObservableObject {
             case .downloaded:
                 // Model downloaded but not loaded - try to load it now
                 transcriptionError = "Loading model, please try again in a moment..."
-                loadModelOnStartup()
+                loadModelsOnStartup()
             case .notDownloaded, .error:
                 transcriptionError = "WhisperKit model not ready. Please download and load the model in Settings."
             case .ready:
                 break // Won't reach here due to guard
             }
+            // Show loading overlay with error message so user sees feedback
+            showLoadingOverlay()
             return
         }
 
@@ -146,6 +187,7 @@ class AppState: ObservableObject {
         Task {
             do {
                 try await audioService.startRecording()
+                SystemAudioService.shared.muteForRecording()
                 SoundService.shared.playRecordingSound()
                 // Show overlay
                 NotificationCenter.default.post(name: .showRecordingOverlay, object: self)
@@ -190,6 +232,8 @@ class AppState: ObservableObject {
                 if !audioService.hasSpeechActivity() {
                     audioService.deleteRecording(at: url)
                     transcriptionError = RecordingError.noSpeechDetected.localizedDescription
+                    // Brief delay so user sees the error message on the overlay
+                    try? await Task.sleep(nanoseconds: 1_500_000_000)
                     NotificationCenter.default.post(name: .hideRecordingOverlay, object: nil)
                     cleanupAfterRecording()
                     return
@@ -205,6 +249,7 @@ class AppState: ObservableObject {
     }
 
     private func cleanupAfterRecording() {
+        SystemAudioService.shared.restoreAfterRecording()
         partialTranscription = nil
         isStoppingRecording = false
         workflowInProgress = false
@@ -218,6 +263,19 @@ class AppState: ObservableObject {
             NotificationCenter.default.post(name: .hideRecordingOverlay, object: nil)
             // Don't transcribe, just discard - release all locks
             cleanupAfterRecording()
+        }
+    }
+
+    /// Show the loading overlay briefly when user tries to record before model is ready
+    private func showLoadingOverlay() {
+        isShowingLoadingOverlay = true
+        NotificationCenter.default.post(name: .showRecordingOverlay, object: self)
+
+        // Auto-hide after 2 seconds
+        Task {
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            isShowingLoadingOverlay = false
+            NotificationCenter.default.post(name: .hideRecordingOverlay, object: nil)
         }
     }
 
@@ -249,9 +307,13 @@ class AppState: ObservableObject {
             let transcriptionService = TranscriptionService()
             let result = try await transcriptionService.transcribe(audioURL: url)
 
-            // Check for empty transcription (silence/no speech detected)
+            // Check for empty transcription (silence/no speech detected by hallucination filter)
             if result.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                // Set isTranscribing to false FIRST so overlay shows error state (not "Finalizing...")
+                isTranscribing = false
                 transcriptionError = RecordingError.noSpeechDetected.localizedDescription
+                // Brief delay so user sees the error message on the overlay before defer hides it
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
                 return
             }
 
@@ -282,7 +344,11 @@ class AppState: ObservableObject {
             }
 
         } catch {
+            // Set isTranscribing to false FIRST so overlay shows error state (not "Finalizing...")
+            isTranscribing = false
             transcriptionError = error.localizedDescription
+            // Brief delay so user sees the error message on the overlay before defer hides it
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
         }
     }
 

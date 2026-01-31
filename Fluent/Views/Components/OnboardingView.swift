@@ -3,6 +3,7 @@ import SwiftUI
 struct OnboardingView: View {
     @EnvironmentObject var appState: AppState
     @ObservedObject var modelManager = ModelManager.shared
+    @ObservedObject var punctuationManager = PunctuationModelManager.shared
     @State private var currentStep: Int
 
     private let totalSteps = 4
@@ -12,8 +13,9 @@ struct OnboardingView: View {
         _currentStep = State(initialValue: 0)
     }
 
-    private var modelReady: Bool {
-        modelManager.isModelDownloaded
+    /// Both models must be downloaded to continue past step 1
+    private var bothModelsReady: Bool {
+        modelManager.isModelDownloaded && punctuationManager.isModelDownloaded
     }
 
     var body: some View {
@@ -73,7 +75,7 @@ struct OnboardingView: View {
                     FluentButton("Continue", icon: "chevron.right", iconPosition: .trailing, variant: .primary) {
                         currentStep += 1
                     }
-                    .disabled(currentStep == 1 && !modelReady)
+                    .disabled(currentStep == 1 && !bothModelsReady)
                 } else {
                     FluentButton("Get Started", icon: "checkmark", variant: .primary) {
                         completeOnboarding()
@@ -82,7 +84,7 @@ struct OnboardingView: View {
             }
             .padding(FluentSpacing.cardPadding)
         }
-        .frame(width: 500, height: 550)
+        .frame(width: 500, height: 600) // Slightly taller to fit both model cards
         .background(
             RoundedRectangle(cornerRadius: FluentRadius.lg)
                 .fill(FluentColors.background)
@@ -95,9 +97,10 @@ struct OnboardingView: View {
         SettingsService.shared.isOnboardingComplete = true
         appState.showOnboarding = false
 
-        // Load model in background after onboarding
+        // Load both models in background after onboarding
         Task {
             try? await modelManager.loadModel()
+            try? await punctuationManager.loadModel()
         }
     }
 }
@@ -156,6 +159,37 @@ struct FeatureRow: View {
 
 struct ModelDownloadStep: View {
     @ObservedObject var modelManager = ModelManager.shared
+    @ObservedObject var punctuationManager = PunctuationModelManager.shared
+    @State private var isDownloading = false
+
+    /// Overall status text
+    private var overallStatusText: String {
+        let whisperDone = modelManager.isModelDownloaded
+        let punctDone = punctuationManager.isModelDownloaded
+
+        if whisperDone && punctDone {
+            return "Both models downloaded!"
+        } else if whisperDone {
+            return "1 of 2 models downloaded"
+        } else {
+            return "0 of 2 models downloaded"
+        }
+    }
+
+    /// Total size description
+    private var totalSizeText: String {
+        "Total: ~350 MB"
+    }
+
+    /// Whether downloads are in progress
+    private var isAnyDownloading: Bool {
+        modelManager.state.isDownloading || punctuationManager.state.isDownloading
+    }
+
+    /// Whether both are downloaded
+    private var bothDownloaded: Bool {
+        modelManager.isModelDownloaded && punctuationManager.isModelDownloaded
+    }
 
     var body: some View {
         VStack(spacing: FluentSpacing.lg) {
@@ -164,106 +198,233 @@ struct ModelDownloadStep: View {
                 .foregroundStyle(FluentColors.primary.gradient)
 
             VStack(spacing: FluentSpacing.sm) {
-                Text("Download Whisper Model")
+                Text("Download Models")
                     .font(.Fluent.headlineMedium)
 
-                Text("Fluent uses a local AI model for transcription.\nNo internet needed after download.")
+                Text("Fluent uses local AI models for transcription.\nNo internet needed after download.")
                     .font(.Fluent.bodyMedium)
                     .foregroundStyle(FluentColors.textSecondary)
                     .multilineTextAlignment(.center)
             }
 
             VStack(spacing: FluentSpacing.md) {
-                // Status card
-                VStack(spacing: FluentSpacing.md) {
-                    HStack(spacing: FluentSpacing.md) {
-                        Image(systemName: statusIcon)
-                            .font(.title2)
-                            .foregroundStyle(statusColor)
-                            .frame(width: 30)
-
-                        VStack(alignment: .leading, spacing: FluentSpacing.xxs) {
-                            Text("Whisper Small Model")
-                                .font(.Fluent.titleSmall)
-                            Text(statusText)
-                                .font(.Fluent.caption)
-                                .foregroundStyle(FluentColors.textSecondary)
-                        }
-
-                        Spacer()
-
-                        Text(modelManager.modelSizeDescription)
-                            .font(.Fluent.monoSmall)
-                            .foregroundStyle(FluentColors.textTertiary)
-                    }
-
-                    // Progress bar when downloading
-                    if case .downloading(let progress) = modelManager.state {
-                        ProgressView(value: progress)
-                            .progressViewStyle(.linear)
-
-                        Text("\(Int(progress * 100))% downloaded")
-                            .font(.Fluent.caption)
-                            .foregroundStyle(FluentColors.textSecondary)
-                    }
-
-                    // Error message
-                    if case .error(let message) = modelManager.state {
-                        HStack(spacing: FluentSpacing.xs) {
-                            Image(systemName: "exclamationmark.circle.fill")
-                            Text(message)
-                        }
-                        .font(.Fluent.caption)
-                        .foregroundStyle(FluentColors.error)
-                    }
-
-                    // Action button
-                    actionButton
-                }
-                .padding(FluentSpacing.cardPadding)
-                .background(
-                    RoundedRectangle(cornerRadius: FluentRadius.md)
-                        .fill(FluentColors.surface)
+                // Whisper Model Card
+                ModelDownloadCard(
+                    title: "Whisper Small Model",
+                    subtitle: "Speech recognition",
+                    size: modelManager.modelSizeDescription,
+                    state: whisperCardState,
+                    progress: modelManager.downloadProgress
                 )
 
-                // Info text
-                if modelManager.isModelDownloaded {
-                    HStack(spacing: FluentSpacing.xs) {
-                        Image(systemName: "checkmark.circle.fill")
-                        Text("Model downloaded! You can continue.")
-                    }
-                    .font(.Fluent.caption)
-                    .foregroundStyle(FluentColors.success)
+                // Punctuation Model Card
+                ModelDownloadCard(
+                    title: "Punctuation Model",
+                    subtitle: "Adds punctuation & capitalization",
+                    size: punctuationManager.modelSizeDescription,
+                    state: punctuationCardState,
+                    progress: punctuationManager.downloadProgress
+                )
+
+                // Overall status
+                HStack {
+                    Text(totalSizeText)
+                        .font(.Fluent.caption)
+                        .foregroundStyle(FluentColors.textTertiary)
+
+                    Spacer()
+
+                    Text(overallStatusText)
+                        .font(.Fluent.caption)
+                        .foregroundStyle(bothDownloaded ? FluentColors.success : FluentColors.textSecondary)
                 }
+
+                // Action button
+                downloadActionButton
             }
-            .frame(maxWidth: 350)
+            .frame(maxWidth: 380)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(FluentSpacing.cardPadding)
     }
 
-    private var statusIcon: String {
+    // MARK: - Card States
+
+    private var whisperCardState: ModelCardState {
         switch modelManager.state {
         case .notDownloaded:
+            return .waiting
+        case .downloading(let progress):
+            return .downloading(progress: progress)
+        case .retrying(let attempt, let max):
+            return .retrying(attempt: attempt, maxAttempts: max)
+        case .downloaded, .loading, .ready:
+            return .completed
+        case .error(let msg):
+            return .error(message: msg)
+        }
+    }
+
+    private var punctuationCardState: ModelCardState {
+        // Punctuation waits for Whisper to complete first
+        if !modelManager.isModelDownloaded && !punctuationManager.state.isDownloading {
+            return .waiting
+        }
+
+        switch punctuationManager.state {
+        case .notDownloaded:
+            return .waiting
+        case .downloading(let progress):
+            return .downloading(progress: progress)
+        case .retrying(let attempt, let max):
+            return .retrying(attempt: attempt, maxAttempts: max)
+        case .downloaded, .loading, .ready:
+            return .completed
+        case .error(let msg):
+            return .error(message: msg)
+        }
+    }
+
+    // MARK: - Action Button
+
+    @ViewBuilder
+    private var downloadActionButton: some View {
+        if bothDownloaded {
+            HStack(spacing: FluentSpacing.xs) {
+                Image(systemName: "checkmark.circle.fill")
+                Text("Downloads Complete")
+            }
+            .font(.Fluent.bodyMedium)
+            .foregroundStyle(FluentColors.success)
+        } else if isAnyDownloading {
+            FluentButton("Cancel", icon: "xmark", variant: .secondary) {
+                cancelAllDownloads()
+            }
+        } else {
+            FluentButton("Download Both Models", icon: "arrow.down.circle", variant: .primary) {
+                Task {
+                    await downloadBothModels()
+                }
+            }
+        }
+    }
+
+    // MARK: - Download Actions
+
+    private func downloadBothModels() async {
+        // Sequential download: Whisper first, then Punctuation
+        if !modelManager.isModelDownloaded {
+            do {
+                try await modelManager.downloadModel()
+            } catch {
+                // Stop if Whisper fails
+                return
+            }
+        }
+
+        if !punctuationManager.isModelDownloaded {
+            do {
+                try await punctuationManager.downloadModel()
+            } catch {
+                // Punctuation failed but Whisper succeeded
+                return
+            }
+        }
+    }
+
+    private func cancelAllDownloads() {
+        modelManager.cancelDownload()
+        punctuationManager.cancelDownload()
+    }
+}
+
+// MARK: - Model Card State
+
+enum ModelCardState {
+    case waiting
+    case downloading(progress: Double)
+    case retrying(attempt: Int, maxAttempts: Int)
+    case completed
+    case error(message: String)
+}
+
+// MARK: - Model Download Card
+
+struct ModelDownloadCard: View {
+    let title: String
+    let subtitle: String
+    let size: String
+    let state: ModelCardState
+    let progress: Double
+
+    var body: some View {
+        VStack(spacing: FluentSpacing.sm) {
+            HStack(spacing: FluentSpacing.md) {
+                // Status icon
+                Image(systemName: statusIcon)
+                    .font(.title2)
+                    .foregroundStyle(statusColor)
+                    .frame(width: 30)
+
+                VStack(alignment: .leading, spacing: FluentSpacing.xxs) {
+                    Text(title)
+                        .font(.Fluent.titleSmall)
+                    Text(statusText)
+                        .font(.Fluent.caption)
+                        .foregroundStyle(FluentColors.textSecondary)
+                }
+
+                Spacer()
+
+                Text(size)
+                    .font(.Fluent.monoSmall)
+                    .foregroundStyle(FluentColors.textTertiary)
+            }
+
+            // Progress bar when downloading
+            if case .downloading = state {
+                ProgressView(value: progress)
+                    .progressViewStyle(.linear)
+            }
+
+            // Error message
+            if case .error(let message) = state {
+                HStack(spacing: FluentSpacing.xs) {
+                    Image(systemName: "exclamationmark.circle.fill")
+                    Text(message)
+                        .lineLimit(1)
+                }
+                .font(.Fluent.caption)
+                .foregroundStyle(FluentColors.error)
+            }
+        }
+        .padding(FluentSpacing.cardPadding)
+        .background(
+            RoundedRectangle(cornerRadius: FluentRadius.md)
+                .fill(FluentColors.surface)
+        )
+    }
+
+    private var statusIcon: String {
+        switch state {
+        case .waiting:
             return "arrow.down.circle"
         case .downloading, .retrying:
             return "arrow.down.circle"
-        case .downloaded, .ready:
+        case .completed:
             return "checkmark.circle.fill"
-        case .loading:
-            return "arrow.clockwise.circle"
         case .error:
             return "exclamationmark.circle"
         }
     }
 
     private var statusColor: Color {
-        switch modelManager.state {
-        case .notDownloaded:
-            return FluentColors.warning
-        case .downloading, .retrying, .loading:
+        switch state {
+        case .waiting:
+            return FluentColors.textTertiary
+        case .downloading, .retrying:
             return FluentColors.primary
-        case .downloaded, .ready:
+        case .completed:
             return FluentColors.success
         case .error:
             return FluentColors.error
@@ -271,44 +432,17 @@ struct ModelDownloadStep: View {
     }
 
     private var statusText: String {
-        switch modelManager.state {
-        case .notDownloaded:
-            return "Ready to download"
-        case .downloading:
-            return "Downloading..."
-        case .retrying(let attempt, let maxAttempts):
-            return "Retrying download (\(attempt)/\(maxAttempts))..."
-        case .downloaded:
-            return "Downloaded successfully"
-        case .loading:
-            return "Loading..."
-        case .ready:
-            return "Ready for transcription"
+        switch state {
+        case .waiting:
+            return "Waiting..."
+        case .downloading(let progress):
+            return "Downloading... \(Int(progress * 100))%"
+        case .retrying(let attempt, let max):
+            return "Retrying (\(attempt)/\(max))..."
+        case .completed:
+            return "Downloaded"
         case .error:
-            return "Download failed"
-        }
-    }
-
-    @ViewBuilder
-    private var actionButton: some View {
-        switch modelManager.state {
-        case .notDownloaded, .error:
-            FluentButton("Download Model", icon: "arrow.down.circle", variant: .primary) {
-                Task {
-                    try? await modelManager.downloadModel()
-                }
-            }
-        case .downloading, .retrying:
-            FluentButton("Cancel", icon: "xmark", variant: .secondary) {
-                modelManager.cancelDownload()
-            }
-        case .downloaded, .loading, .ready:
-            HStack(spacing: FluentSpacing.xs) {
-                Image(systemName: "checkmark.circle.fill")
-                Text("Download Complete")
-            }
-            .font(.Fluent.bodyMedium)
-            .foregroundStyle(FluentColors.success)
+            return "Failed"
         }
     }
 }

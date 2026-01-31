@@ -52,7 +52,8 @@ class AudioRecordingService: ObservableObject {
 
     // Track audio levels during recording for silence detection
     private var allLevelSamples: [Float] = []
-    private static let silenceThreshold: Float = 0.05
+    private static let silenceThreshold: Float = 0.08
+    private static let peakToAverageThreshold: Float = 1.8
 
     // Streaming audio support for real-time transcription
     private var audioBufferContinuation: AsyncStream<[Float]>.Continuation?
@@ -228,9 +229,28 @@ class AudioRecordingService: ObservableObject {
         return allLevelSamples.reduce(0, +) / Float(allLevelSamples.count)
     }
 
-    /// Checks if the recording has sufficient audio activity (not just silence)
+    /// Returns the peak audio level from the recording session
+    func getPeakLevel() -> Float {
+        return allLevelSamples.max() ?? 0
+    }
+
+    /// Returns the ratio of peak to average level
+    /// Real speech has bursts (peaks 2x+ higher than average)
+    /// Ambient noise is uniform (ratio ~1.0-1.5)
+    func getPeakToAverageRatio() -> Float {
+        let average = getAverageLevel()
+        guard average > 0.001 else { return 0 }
+        return getPeakLevel() / average
+    }
+
+    /// Checks if the recording has sufficient audio activity (not just silence or ambient noise)
+    /// Uses OR logic: either good volume OR dynamic range indicates speech
+    /// This avoids rejecting soft/continuous speech that may have lower peak-to-average ratio
     func hasSpeechActivity() -> Bool {
-        return getAverageLevel() >= Self.silenceThreshold
+        let averageLevel = getAverageLevel()
+        let peakRatio = getPeakToAverageRatio()
+        // Accept if: good volume alone, OR moderate volume with some dynamic range
+        return averageLevel >= Self.silenceThreshold || (averageLevel >= 0.03 && peakRatio >= 1.5)
     }
 
     // MARK: - Audio Format Conversion

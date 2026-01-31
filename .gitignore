@@ -23,3 +23,6 @@ Carthage/Build/
 
 # Archives
 *.xcarchive
+
+# Large model files (downloaded at runtime)
+Fluent/Resources/Models/punct_cap_seg_en.onnx

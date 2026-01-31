@@ -16,6 +16,7 @@ enum FluentColors {
     // Surfaces
     static let background = Color(NSColor.windowBackgroundColor)
     static let surface = Color(NSColor.controlBackgroundColor)
+    static let surfaceSecondary = Color(NSColor.unemphasizedSelectedContentBackgroundColor)
     static let surfaceHover = Color(NSColor.controlBackgroundColor).opacity(0.8)
     static let surfaceElevated = Color(NSColor.textBackgroundColor)
 

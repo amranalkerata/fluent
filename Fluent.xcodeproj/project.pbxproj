@@ -15,9 +15,6 @@
 		006 /* Recording.swift in Sources */ = {isa = PBXBuildFile; fileRef = 106 /* Recording.swift */; };
 		008 /* AudioRecordingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 108 /* AudioRecordingService.swift */; };
 		009 /* TranscriptionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 109 /* TranscriptionService.swift */; };
-		043 /* ModelManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 144 /* ModelManager.swift */; };
-		044 /* AudioConverter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 145 /* AudioConverter.swift */; };
-		045 /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = 500 /* WhisperKit */; };
 		011 /* HotkeyService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111 /* HotkeyService.swift */; };
 		012 /* KeychainService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 112 /* KeychainService.swift */; };
 		013 /* SettingsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 113 /* SettingsService.swift */; };
@@ -49,6 +46,17 @@
 		040 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 141 /* Assets.xcassets */; };
 		041 /* SoundService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 142 /* SoundService.swift */; };
 		042 /* sound.m4a in Resources */ = {isa = PBXBuildFile; fileRef = 143 /* sound.m4a */; };
+		043 /* ModelManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 144 /* ModelManager.swift */; };
+		044 /* AudioConverter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 145 /* AudioConverter.swift */; };
+		045 /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = 500 /* WhisperKit */; };
+		046 /* TextFormattingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 146 /* TextFormattingService.swift */; };
+		047 /* PunctuationModelManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 147 /* PunctuationModelManager.swift */; };
+		050 /* ListFormattingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 150 /* ListFormattingService.swift */; };
+		049 /* spe_32k_lc_en.model in Resources */ = {isa = PBXBuildFile; fileRef = 149 /* spe_32k_lc_en.model */; };
+		15B0A7E92F2CF65E006AA075 /* onnxruntime in Frameworks */ = {isa = PBXBuildFile; productRef = 15B0A7E82F2CF65E006AA075 /* onnxruntime */; };
+		15B0A7EB2F2CF65E006AA075 /* onnxruntime_extensions in Frameworks */ = {isa = PBXBuildFile; productRef = 15B0A7EA2F2CF65E006AA075 /* onnxruntime_extensions */; };
+		15B0A7EE2F2CF685006AA075 /* SentencepieceTokenizer in Frameworks */ = {isa = PBXBuildFile; productRef = 15B0A7ED2F2CF685006AA075 /* SentencepieceTokenizer */; };
+		051 /* SystemAudioService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 151 /* SystemAudioService.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -60,8 +68,6 @@
 		106 /* Recording.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Recording.swift; sourceTree = "<group>"; };
 		108 /* AudioRecordingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRecordingService.swift; sourceTree = "<group>"; };
 		109 /* TranscriptionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptionService.swift; sourceTree = "<group>"; };
-		144 /* ModelManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelManager.swift; sourceTree = "<group>"; };
-		145 /* AudioConverter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioConverter.swift; sourceTree = "<group>"; };
 		111 /* HotkeyService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyService.swift; sourceTree = "<group>"; };
 		112 /* KeychainService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainService.swift; sourceTree = "<group>"; };
 		113 /* SettingsService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsService.swift; sourceTree = "<group>"; };
@@ -94,7 +100,14 @@
 		141 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		142 /* SoundService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SoundService.swift; sourceTree = "<group>"; };
 		143 /* sound.m4a */ = {isa = PBXFileReference; lastKnownFileType = audio.m4a; path = sound.m4a; sourceTree = "<group>"; };
+		144 /* ModelManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelManager.swift; sourceTree = "<group>"; };
+		145 /* AudioConverter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioConverter.swift; sourceTree = "<group>"; };
+		146 /* TextFormattingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextFormattingService.swift; sourceTree = "<group>"; };
+		147 /* PunctuationModelManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PunctuationModelManager.swift; sourceTree = "<group>"; };
+		150 /* ListFormattingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListFormattingService.swift; sourceTree = "<group>"; };
+		149 /* spe_32k_lc_en.model */ = {isa = PBXFileReference; lastKnownFileType = file; path = spe_32k_lc_en.model; sourceTree = "<group>"; };
 		15C981DD2F190AE800C28913 /* File.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = File.txt; sourceTree = "<group>"; };
+		151 /* SystemAudioService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemAudioService.swift; sourceTree = "<group>"; };
 		900 /* Fluent.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Fluent.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -103,7 +116,10 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				15B0A7EE2F2CF685006AA075 /* SentencepieceTokenizer in Frameworks */,
+				15B0A7E92F2CF65E006AA075 /* onnxruntime in Frameworks */,
 				045 /* WhisperKit in Frameworks */,
+				15B0A7EB2F2CF65E006AA075 /* onnxruntime_extensions in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -191,8 +207,17 @@
 				141 /* Assets.xcassets */,
 				129 /* Info.plist */,
 				143 /* sound.m4a */,
+				209 /* Models */,
 			);
 			path = Resources;
+			sourceTree = "<group>";
+		};
+		209 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				149 /* spe_32k_lc_en.model */,
+			);
+			path = Models;
 			sourceTree = "<group>";
 		};
 		207 /* Theme */ = {
@@ -235,6 +260,9 @@
 			children = (
 				109 /* TranscriptionService.swift */,
 				144 /* ModelManager.swift */,
+				146 /* TextFormattingService.swift */,
+				147 /* PunctuationModelManager.swift */,
+				150 /* ListFormattingService.swift */,
 			);
 			path = Transcription;
 			sourceTree = "<group>";
@@ -262,6 +290,7 @@
 			children = (
 				114 /* PasteService.swift */,
 				115 /* PermissionService.swift */,
+				151 /* SystemAudioService.swift */,
 			);
 			path = System;
 			sourceTree = "<group>";
@@ -337,7 +366,10 @@
 			);
 			name = Fluent;
 			packageProductDependencies = (
-				500 /* whisper */,
+				500 /* WhisperKit */,
+				15B0A7E82F2CF65E006AA075 /* onnxruntime */,
+				15B0A7EA2F2CF65E006AA075 /* onnxruntime_extensions */,
+				15B0A7ED2F2CF685006AA075 /* SentencepieceTokenizer */,
 			);
 			productName = Fluent;
 			productReference = 900 /* Fluent.app */;
@@ -367,10 +399,12 @@
 				Base,
 			);
 			mainGroup = 000;
-			productRefGroup = 901 /* Products */;
 			packageReferences = (
 				501 /* XCRemoteSwiftPackageReference "WhisperKit" */,
+				15B0A7E72F2CF65E006AA075 /* XCRemoteSwiftPackageReference "onnxruntime-swift-package-manager" */,
+				15B0A7EC2F2CF685006AA075 /* XCRemoteSwiftPackageReference "swift-sentencepiece" */,
 			);
+			productRefGroup = 901 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -386,6 +420,7 @@
 			files = (
 				040 /* Assets.xcassets in Resources */,
 				042 /* sound.m4a in Resources */,
+				049 /* spe_32k_lc_en.model in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -410,6 +445,7 @@
 				013 /* SettingsService.swift in Sources */,
 				014 /* PasteService.swift in Sources */,
 				015 /* PermissionService.swift in Sources */,
+				051 /* SystemAudioService.swift in Sources */,
 				016 /* MainWindow.swift in Sources */,
 				017 /* SidebarView.swift in Sources */,
 				018 /* HomeView.swift in Sources */,
@@ -435,6 +471,9 @@
 				041 /* SoundService.swift in Sources */,
 				043 /* ModelManager.swift in Sources */,
 				044 /* AudioConverter.swift in Sources */,
+				046 /* TextFormattingService.swift in Sources */,
+				047 /* PunctuationModelManager.swift in Sources */,
+				050 /* ListFormattingService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -589,7 +628,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.0;
+				MARKETING_VERSION = 2.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.fluent.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -621,7 +660,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.0;
+				MARKETING_VERSION = 2.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.fluent.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -653,6 +692,22 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		15B0A7E72F2CF65E006AA075 /* XCRemoteSwiftPackageReference "onnxruntime-swift-package-manager" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/microsoft/onnxruntime-swift-package-manager";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.20.0;
+			};
+		};
+		15B0A7EC2F2CF685006AA075 /* XCRemoteSwiftPackageReference "swift-sentencepiece" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/jkrukowski/swift-sentencepiece";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.0.6;
+			};
+		};
 		501 /* XCRemoteSwiftPackageReference "WhisperKit" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/argmaxinc/WhisperKit.git";
@@ -664,6 +719,21 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		15B0A7E82F2CF65E006AA075 /* onnxruntime */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 15B0A7E72F2CF65E006AA075 /* XCRemoteSwiftPackageReference "onnxruntime-swift-package-manager" */;
+			productName = onnxruntime;
+		};
+		15B0A7EA2F2CF65E006AA075 /* onnxruntime_extensions */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 15B0A7E72F2CF65E006AA075 /* XCRemoteSwiftPackageReference "onnxruntime-swift-package-manager" */;
+			productName = onnxruntime_extensions;
+		};
+		15B0A7ED2F2CF685006AA075 /* SentencepieceTokenizer */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 15B0A7EC2F2CF685006AA075 /* XCRemoteSwiftPackageReference "swift-sentencepiece" */;
+			productName = SentencepieceTokenizer;
+		};
 		500 /* WhisperKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 501 /* XCRemoteSwiftPackageReference "WhisperKit" */;

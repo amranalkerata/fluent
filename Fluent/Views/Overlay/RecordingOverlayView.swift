@@ -6,7 +6,18 @@ struct RecordingOverlayView: View {
 
     var body: some View {
         VStack(spacing: FluentSpacing.xs) {
-            if appState.isRecording {
+            if appState.isShowingLoadingOverlay {
+                // Model loading state - shown when user presses hotkey before model is ready
+                HStack(spacing: FluentSpacing.sm) {
+                    ProgressView()
+                        .scaleEffect(0.8)
+
+                    Text(appState.transcriptionError ?? "Loading model, please wait...")
+                        .font(.Fluent.caption)
+                        .foregroundStyle(FluentColors.textSecondary)
+                        .lineLimit(2)
+                }
+            } else if appState.isRecording {
                 // Recording UI
                 HStack(spacing: FluentSpacing.sm) {
                     Circle()
@@ -44,8 +55,20 @@ struct RecordingOverlayView: View {
                         .font(.Fluent.caption)
                         .foregroundStyle(FluentColors.textSecondary)
                 }
+            } else if let error = appState.transcriptionError {
+                // Error UI - shows briefly before overlay hides
+                HStack(spacing: FluentSpacing.sm) {
+                    Image(systemName: "waveform.slash")
+                        .foregroundStyle(FluentColors.textSecondary)
+
+                    Text(error)
+                        .font(.Fluent.caption)
+                        .foregroundStyle(FluentColors.textSecondary)
+                        .lineLimit(1)
+                }
             }
         }
+        .frame(minWidth: 280)
         .padding(.horizontal, FluentSpacing.md)
         .padding(.vertical, FluentSpacing.sm)
         .background(

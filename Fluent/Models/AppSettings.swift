@@ -3,6 +3,8 @@ import Foundation
 struct AppSettings: Codable, Equatable {
     // MARK: - Transcription Settings
     var language: TranscriptionLanguage = .auto
+    var formatTextEnabled: Bool = true
+    var formatListsEnabled: Bool = true
 
     // MARK: - Behavior Settings
     var autoPasteEnabled: Bool = true

@@ -25,9 +25,12 @@ enum TranscriptionError: LocalizedError {
 
 class TranscriptionService {
     private let settingsService = SettingsService.shared
+    private let textFormattingService = TextFormattingService()
 
-    // Known Whisper hallucination phrases (lowercased for comparison)
+    // Known Whisper hallucination phrases (lowercased, without brackets for comparison)
+    // The isHallucination() method strips brackets/parentheses before comparing
     private let hallucinationPhrases: Set<String> = [
+        // YouTube-style phrases
         "thank you for watching",
         "thanks for watching",
         "please subscribe",
@@ -40,22 +43,155 @@ class TranscriptionService {
         "bye bye",
         "thank you",
         "thanks",
+        // Ellipsis and short filler
         "...",
         "…",
         "you",
-        "[music]",
-        "[applause]",
-        "(music)",
-        "(applause)",
-        "[silence]",
-        "(silence)"
+        // Audio markers (stored without brackets - they get stripped)
+        "music",
+        "music playing",
+        "applause",
+        "silence",
+        // Phone/device sounds
+        "phone beeps",
+        "phone beeping",
+        "phone ringing",
+        "phone rings",
+        "beep",
+        "beeps",
+        "ding",
+        // Other common hallucinations
+        "inaudible",
+        "unintelligible",
+        "blank audio",
+        "no audio",
+        "static",
+        "background noise",
+        "coughing",
+        "laughter",
+        "laughing",
+        "sighing",
+        "sigh",
+        "breathing",
+        "clearing throat",
+        // Filler sounds / hesitation markers
+        "hmm",
+        "hm",
+        "uh",
+        "um",
+        "mhm",
+        "mm",
+        "mmm",
+        "ah",
+        "eh",
+        "oh",
+        // Transcription artifacts
+        "indistinct",
+        "muffled",
+        "foreign language",
+        "speaking foreign language",
+        "speaking in foreign language",
+        "subtitles by",
+        "captions by",
+        "transcript by"
     ]
+
+    // MARK: - Hallucination Detection Helpers
+
+    /// Check if text contains CJK (Chinese, Japanese, Korean) characters
+    private func containsCJK(_ text: String) -> Bool {
+        let cjkPattern = "[\\u4E00-\\u9FFF\\u3040-\\u309F\\u30A0-\\u30FF\\uAC00-\\uD7AF]"
+        return text.range(of: cjkPattern, options: .regularExpression) != nil
+    }
+
+    /// Check for partial brackets followed by CJK text: "(知事) 言いません"
+    private func hasPartialBracketWithCJK(_ text: String) -> Bool {
+        // Pattern: bracket content followed by CJK outside the brackets
+        let patterns = [
+            "\\([^)]+\\)\\s*[\\u4E00-\\u9FFF\\u3040-\\u309F\\u30A0-\\u30FF]",
+            "\\[[^\\]]+\\]\\s*[\\u4E00-\\u9FFF\\u3040-\\u309F\\u30A0-\\u30FF]"
+        ]
+        for pattern in patterns {
+            if text.range(of: pattern, options: .regularExpression) != nil {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Check for excessive character repetition: "??????", "aaaaaaa"
+    private func hasExcessiveRepetition(_ text: String) -> Bool {
+        // 4 or more consecutive identical characters
+        let pattern = "(.)\\1{3,}"
+        return text.range(of: pattern, options: .regularExpression) != nil
+    }
+
+    /// Check if text is mostly question marks (Whisper hallucination on silence)
+    /// Catches both regular ? and inverted ¿ question marks which are different Unicode characters
+    private func isQuestionMarkSpam(_ text: String) -> Bool {
+        let letters = text.filter { $0.isLetter }
+        let questionMarks = text.filter { $0 == "?" || $0 == "¿" }
+        // If more question marks than letters and at least 4 question marks, it's spam
+        return questionMarks.count > 3 && questionMarks.count > letters.count
+    }
+
+    /// Check if text contains unexpected script for English language setting
+    private func isUnexpectedScript(_ text: String) -> Bool {
+        // When user has English selected, CJK is unexpected
+        let language = settingsService.settings.language
+        if language == .english || language == .auto {
+            return containsCJK(text)
+        }
+        return false
+    }
 
     /// Checks if the transcription is likely a Whisper hallucination
     private func isHallucination(_ text: String) -> Bool {
-        let normalized = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        // Check for known hallucination phrases or very short text
-        return hallucinationPhrases.contains(normalized) || normalized.count < 2
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // 1. Reject if entire text is wrapped in brackets or parentheses
+        //    This catches ALL audio markers: [music], (click), [Light music], etc.
+        //    Pattern-based detection beats blocklists because Whisper generates endless variations
+        if (trimmed.hasPrefix("[") && trimmed.hasSuffix("]")) ||
+           (trimmed.hasPrefix("(") && trimmed.hasSuffix(")")) {
+            return true
+        }
+
+        // 2. Reject very short text (likely not real speech)
+        if trimmed.count < 2 {
+            return true
+        }
+
+        // 3. Check for partial brackets with CJK: "(知事) 言いません"
+        if hasPartialBracketWithCJK(trimmed) {
+            return true
+        }
+
+        // 4. Check for excessive repetition: "??????", "aaaaaaa"
+        if hasExcessiveRepetition(trimmed) {
+            return true
+        }
+
+        // 5. Check for question mark spam (Whisper hallucination on silence)
+        if isQuestionMarkSpam(trimmed) {
+            return true
+        }
+
+        // 6. Check for unexpected script (CJK when English is selected)
+        if isUnexpectedScript(trimmed) {
+            return true
+        }
+
+        // 7. Check blocklist for unbracketed hallucinations (e.g., "Thank you for watching")
+        var normalized = trimmed.lowercased()
+        normalized = normalized
+            .replacingOccurrences(of: "[", with: "")
+            .replacingOccurrences(of: "]", with: "")
+            .replacingOccurrences(of: "(", with: "")
+            .replacingOccurrences(of: ")", with: "")
+            .trimmingCharacters(in: .whitespaces)
+
+        return hallucinationPhrases.contains(normalized)
     }
 
     /// Streaming transcription - transcribes audio as it's being recorded
@@ -91,7 +227,10 @@ class TranscriptionService {
             return ""
         }
 
-        return trimmedResult
+        // Apply text formatting (punctuation + capitalization) if enabled
+        let formattedResult = await textFormattingService.format(text: trimmedResult)
+
+        return formattedResult
     }
 
     func transcribe(audioURL: URL) async throws -> String {
@@ -139,7 +278,10 @@ class TranscriptionService {
             return ""
         }
 
-        return trimmedResult
+        // Apply text formatting (punctuation + capitalization) if enabled
+        let formattedResult = await textFormattingService.format(text: trimmedResult)
+
+        return formattedResult
     }
 
     /// Check if the model is ready for transcription
