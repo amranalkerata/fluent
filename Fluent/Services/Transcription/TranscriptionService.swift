@@ -194,6 +194,35 @@ class TranscriptionService {
         return hallucinationPhrases.contains(normalized)
     }
 
+    /// Removes transcription artifacts like [inaudible], [BLANK_AUDIO], (click), etc.
+    /// These are Whisper-generated markers that shouldn't appear in the final output
+    private func cleanTranscriptionArtifacts(_ text: String) -> String {
+        var cleaned = text
+
+        // Remove content in square brackets: [inaudible], [BLANK_AUDIO], [music], etc.
+        cleaned = cleaned.replacingOccurrences(
+            of: "\\[[^\\]]*\\]",
+            with: "",
+            options: .regularExpression
+        )
+
+        // Remove content in parentheses: (applause), (click), (inaudible), etc.
+        cleaned = cleaned.replacingOccurrences(
+            of: "\\([^)]*\\)",
+            with: "",
+            options: .regularExpression
+        )
+
+        // Clean up multiple spaces left behind
+        cleaned = cleaned.replacingOccurrences(
+            of: "\\s{2,}",
+            with: " ",
+            options: .regularExpression
+        )
+
+        return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// Streaming transcription - transcribes audio as it's being recorded
     /// Returns the final transcription and provides partial results via callback
     func transcribeStreaming(
@@ -230,7 +259,10 @@ class TranscriptionService {
         // Apply text formatting (punctuation + capitalization) if enabled
         let formattedResult = await textFormattingService.format(text: trimmedResult)
 
-        return formattedResult
+        // Remove any remaining transcription artifacts
+        let cleanedResult = cleanTranscriptionArtifacts(formattedResult)
+
+        return cleanedResult
     }
 
     func transcribe(audioURL: URL) async throws -> String {
@@ -281,7 +313,10 @@ class TranscriptionService {
         // Apply text formatting (punctuation + capitalization) if enabled
         let formattedResult = await textFormattingService.format(text: trimmedResult)
 
-        return formattedResult
+        // Remove any remaining transcription artifacts
+        let cleanedResult = cleanTranscriptionArtifacts(formattedResult)
+
+        return cleanedResult
     }
 
     /// Check if the model is ready for transcription

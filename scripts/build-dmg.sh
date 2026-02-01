@@ -102,12 +102,11 @@ create_dmg() {
     create-dmg \
         --volname "$APP_NAME" \
         --volicon "$BUILD_DIR/$APP_NAME.app/Contents/Resources/AppIcon.icns" \
-        --window-pos 200 120 \
-        --window-size 600 400 \
         --icon-size 100 \
         --icon "$APP_NAME.app" 150 190 \
         --hide-extension "$APP_NAME.app" \
         --app-drop-link 450 190 \
+        --skip-jenkins \
         "$BUILD_DIR/$APP_NAME.dmg" \
         "$BUILD_DIR/$APP_NAME.app"
 

@@ -2,6 +2,7 @@ import SwiftUI
 import SwiftData
 import Combine
 import AVFoundation
+import UserNotifications
 
 @MainActor
 class AppState: ObservableObject {
@@ -298,8 +299,8 @@ class AppState: ObservableObject {
         defer {
             // Always release all locks when transcription completes (success or failure)
             isTranscribing = false
-            // Hide overlay after workflow completes
-            NotificationCenter.default.post(name: .hideRecordingOverlay, object: nil)
+            // Note: Overlay is now hidden BEFORE paste attempt (not here) to ensure
+            // focus returns to target app. This defer handles cleanup and error cases.
             // Delete the audio file - no longer needed after transcription
             audioService.deleteRecording(at: url)
             cleanupAfterRecording()
@@ -315,8 +316,10 @@ class AppState: ObservableObject {
                 // Set isTranscribing to false FIRST so overlay shows error state (not "Finalizing...")
                 isTranscribing = false
                 transcriptionError = RecordingError.noSpeechDetected.localizedDescription
-                // Brief delay so user sees the error message on the overlay before defer hides it
+                // Brief delay so user sees the error message on the overlay
                 try? await Task.sleep(nanoseconds: 1_500_000_000)
+                // Hide overlay after showing error
+                NotificationCenter.default.post(name: .hideRecordingOverlay, object: nil)
                 return
             }
 
@@ -325,11 +328,34 @@ class AppState: ObservableObject {
 
             // Determine target application for paste
             var targetApp: String? = nil
+            var pasteSucceeded = false
 
             // Auto-paste (only if we have text and weren't cancelled)
             if !result.isEmpty {
+                // CRITICAL: Capture target app BEFORE hiding overlay
+                // The overlay might steal focus, so we need to know where to return
                 targetApp = NSWorkspace.shared.frontmostApplication?.localizedName
-                PasteService.shared.pasteText(result)
+
+                // Hide overlay FIRST to return focus to the target app
+                // This is crucial - the overlay can steal focus and cause paste to fail
+                NotificationCenter.default.post(name: .hideRecordingOverlay, object: nil)
+
+                // Small delay to let focus settle back to target app
+                try? await Task.sleep(nanoseconds: 100_000_000)  // 100ms
+
+                // Use continuation to await the paste result
+                let pasteResult = await withCheckedContinuation { continuation in
+                    PasteService.shared.pasteText(result) { result in
+                        continuation.resume(returning: result)
+                    }
+                }
+
+                pasteSucceeded = pasteResult.succeeded
+
+                // Show notification if paste failed
+                if !pasteSucceeded {
+                    showPasteFailedNotification(pasteResult: pasteResult)
+                }
             }
 
             // Save recording to history (enforces 100-item limit automatically)
@@ -339,7 +365,7 @@ class AppState: ObservableObject {
                     audioFileName: nil,  // Audio file is deleted after transcription
                     originalTranscription: result,
                     enhancedTranscription: nil,  // No GPT enhancement anymore
-                    isPasted: !result.isEmpty,
+                    isPasted: pasteSucceeded,
                     targetApplication: targetApp
                 )
             } catch {
@@ -350,8 +376,10 @@ class AppState: ObservableObject {
             // Set isTranscribing to false FIRST so overlay shows error state (not "Finalizing...")
             isTranscribing = false
             transcriptionError = error.localizedDescription
-            // Brief delay so user sees the error message on the overlay before defer hides it
+            // Brief delay so user sees the error message on the overlay
             try? await Task.sleep(nanoseconds: 1_500_000_000)
+            // Hide overlay after showing error
+            NotificationCenter.default.post(name: .hideRecordingOverlay, object: nil)
         }
     }
 
@@ -386,7 +414,43 @@ class AppState: ObservableObject {
 
     func pasteLastTranscript() {
         guard let text = lastTranscription, !text.isEmpty else { return }
-        PasteService.shared.pasteText(text)
+        PasteService.shared.pasteText(text) { [weak self] result in
+            if !result.succeeded {
+                self?.showPasteFailedNotification(pasteResult: result)
+            }
+        }
+    }
+
+    // MARK: - Notifications
+
+    private func showPasteFailedNotification(pasteResult: PasteResult) {
+        let content = UNMutableNotificationContent()
+        content.title = "Paste Failed"
+
+        switch pasteResult {
+        case .debounced:
+            content.body = "Too fast! Text copied to clipboard - press ⌘V to paste."
+        case .alreadyPasting:
+            content.body = "Previous paste still in progress. Text copied to clipboard - press ⌘V to paste."
+        case .clipboardFailed, .eventSourceFailed, .eventCreationFailed:
+            content.body = "Text copied to clipboard - press ⌘V to paste."
+        default:
+            content.body = "Text available in history. Copy from there to paste."
+        }
+
+        content.sound = .default
+
+        let request = UNNotificationRequest(
+            identifier: "paste-failed-\(UUID().uuidString)",
+            content: content,
+            trigger: nil // Deliver immediately
+        )
+
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error = error {
+                print("Failed to show paste notification: \(error)")
+            }
+        }
     }
 }
 
