@@ -589,10 +589,10 @@ struct AboutSettingsCard: View {
                     .font(.Fluent.caption)
                 }
 
-                Link(destination: URL(string: "https://www.linkedin.com/in/amran-al-kerata/")!) {
+                Link(destination: URL(string: "https://x.com/amran_al_kerata")!) {
                     HStack(spacing: FluentSpacing.xs) {
-                        Image(systemName: "person.crop.circle")
-                        Text("LinkedIn")
+                        Image(systemName: "at")
+                        Text("X")
                     }
                     .font(.Fluent.caption)
                 }
