@@ -20,7 +20,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupNotificationObservers()
         setupWindowObservers()
-        checkAndRequestInputMonitoringPermission()
+        checkAndRequestAccessibilityPermission()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -88,28 +88,27 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         }
     }
 
-    // MARK: - Input Monitoring Permission
+    // MARK: - Accessibility Permission
 
-    private func checkAndRequestInputMonitoringPermission() {
-        let trusted = CGPreflightListenEventAccess()
-        if trusted {
+    private func checkAndRequestAccessibilityPermission() {
+        if AXIsProcessTrusted() {
             setupGlobalEventTap()
         } else {
-            // Request permission - this will open System Settings
+            // Request permission - this will open System Settings > Accessibility
             let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
             AXIsProcessTrustedWithOptions(options as CFDictionary)
 
             // Poll for permission being granted
-            pollForInputMonitoringPermission()
+            pollForAccessibilityPermission()
         }
     }
 
-    private func pollForInputMonitoringPermission() {
+    private func pollForAccessibilityPermission() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-            if CGPreflightListenEventAccess() {
+            if AXIsProcessTrusted() {
                 self?.setupGlobalEventTap()
             } else {
-                self?.pollForInputMonitoringPermission()
+                self?.pollForAccessibilityPermission()
             }
         }
     }
@@ -126,7 +125,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
-            options: .listenOnly,
+            options: .defaultTap,
             eventsOfInterest: eventMask,
             callback: { proxy, type, event, refcon -> Unmanaged<CGEvent>? in
                 return AppDelegate.handleGlobalEvent(proxy: proxy, type: type, event: event, refcon: refcon)
@@ -170,20 +169,26 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         // Handle Fn key via flagsChanged
         if type == .flagsChanged {
             let flags = event.flags
-            HotkeyService.shared.handleFlagsChanged(flags: flags)
+            if HotkeyService.shared.handleFlagsChanged(flags: flags) {
+                return nil // Consume event — prevent system action (e.g. keyboard switch)
+            }
         }
 
         // Handle regular key events
         if type == .keyDown {
             let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
             let flags = event.flags
-            HotkeyService.shared.processKeyEvent(keyCode: keyCode, modifiers: flags, isKeyDown: true)
+            if HotkeyService.shared.processKeyEvent(keyCode: keyCode, modifiers: flags, isKeyDown: true) {
+                return nil
+            }
         }
 
         if type == .keyUp {
             let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
             let flags = event.flags
-            HotkeyService.shared.processKeyEvent(keyCode: keyCode, modifiers: flags, isKeyDown: false)
+            if HotkeyService.shared.processKeyEvent(keyCode: keyCode, modifiers: flags, isKeyDown: false) {
+                return nil
+            }
         }
 
         return Unmanaged.passRetained(event)

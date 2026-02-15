@@ -38,14 +38,15 @@ class HotkeyService: ObservableObject {
 
     // MARK: - Event Processing
 
-    func processKeyEvent(keyCode: UInt16, modifiers: CGEventFlags, isKeyDown: Bool) {
+    @discardableResult
+    func processKeyEvent(keyCode: UInt16, modifiers: CGEventFlags, isKeyDown: Bool) -> Bool {
         // If recording a shortcut, capture it
         if isRecordingShortcut && isKeyDown {
             captureShortcut(keyCode: keyCode, modifiers: modifiers)
-            return
+            return true
         }
 
-        guard isKeyDown else { return }
+        guard isKeyDown else { return false }
 
         // Check against registered shortcuts
         for action in ShortcutAction.allCases {
@@ -53,32 +54,36 @@ class HotkeyService: ObservableObject {
             for shortcut in shortcuts {
                 if shortcut.matches(keyCode: keyCode, modifiers: modifiers) {
                     triggerAction(action)
-                    return
+                    return true
                 }
             }
         }
+        return false
     }
 
-    func handleFlagsChanged(flags: CGEventFlags) {
+    @discardableResult
+    func handleFlagsChanged(flags: CGEventFlags) -> Bool {
         let fnKeyIsPressed = flags.contains(.maskSecondaryFn)
+        var consumed = false
 
         // Detect Fn key press (transition from not pressed to pressed)
         if fnKeyIsPressed && !fnKeyWasPressed {
-            handleFnKeyPressed()
+            consumed = handleFnKeyPressed()
         } else if !fnKeyIsPressed && fnKeyWasPressed {
-            handleFnKeyReleased()
+            consumed = handleFnKeyReleased()
         }
 
         fnKeyWasPressed = fnKeyIsPressed
+        return consumed
     }
 
-    private func handleFnKeyPressed() {
+    private func handleFnKeyPressed() -> Bool {
         let now = Date()
 
         // Debounce to prevent multiple triggers
         if let lastPress = lastFnPressTime,
            now.timeIntervalSince(lastPress) < fnKeyDebounceInterval {
-            return
+            return true // Still consume during debounce to avoid system side-effects
         }
 
         lastFnPressTime = now
@@ -86,7 +91,7 @@ class HotkeyService: ObservableObject {
         // If recording a shortcut, capture Fn
         if isRecordingShortcut {
             captureShortcut(keyCode: nil, modifiers: CGEventFlags(), isFnKey: true)
-            return
+            return true
         }
 
         // Check if Fn is registered for any action
@@ -95,14 +100,16 @@ class HotkeyService: ObservableObject {
             for shortcut in shortcuts {
                 if shortcut.isFnKey {
                     triggerAction(action)
-                    return
+                    return true
                 }
             }
         }
+        return false
     }
 
-    private func handleFnKeyReleased() {
+    private func handleFnKeyReleased() -> Bool {
         // Can be used for press-and-hold behavior in the future
+        return false
     }
 
     private func triggerAction(_ action: ShortcutAction) {
