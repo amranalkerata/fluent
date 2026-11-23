@@ -82,6 +82,17 @@ struct FluentApp: App {
 enum PunctuationSelfTest {
     static func runIfRequested() {
         let arguments = CommandLine.arguments
+        if arguments.contains("--audio-device-selftest") {
+            // Which input the next recording will use, without touching the microphone
+            print(AudioDeviceManager.shared.preferredDeviceName ?? "system default input")
+            fflush(stdout)
+            exit(0)
+        }
+        if let index = arguments.firstIndex(of: "--transcribe-dir"), index + 2 < arguments.count {
+            // Batch accuracy check: raw Whisper output for every .wav in a folder, as TSV
+            //   Fluent --transcribe-dir /path/to/wavs ar|auto
+            runTranscriptionDirectory(arguments[index + 1], language: arguments[index + 2])
+        }
         if let index = arguments.firstIndex(of: "--transcribe-selftest"), index + 1 < arguments.count {
             runTranscription(audioPath: arguments[index + 1])
         }
@@ -104,6 +115,31 @@ enum PunctuationSelfTest {
             exit(0)
         }
         // Serve the main queue until the task exits; never returns.
+        dispatchMain()
+    }
+
+    private static func runTranscriptionDirectory(_ path: String, language: String) -> Never {
+        Task { @MainActor in
+            do {
+                let manager = ModelManager.shared
+                if !manager.isModelDownloaded { try await manager.downloadModel() }
+                try await manager.loadModel()
+                let files = try FileManager.default.contentsOfDirectory(atPath: path)
+                    .filter { $0.hasSuffix(".wav") }.sorted()
+                for file in files {
+                    let url = URL(fileURLWithPath: path).appendingPathComponent(file)
+                    let samples = try await AudioConverter.convertToWhisperSamples(url: url)
+                    let start = Date()
+                    let text = try await manager.transcribe(samples: samples, language: language == "auto" ? nil : language)
+                    let ms = Int(Date().timeIntervalSince(start) * 1000)
+                    print("\(file)\t\(ms)\t\(text.replacingOccurrences(of: "\t", with: " ").replacingOccurrences(of: "\n", with: " "))")
+                    fflush(stdout)
+                }
+            } catch {
+                FileHandle.standardError.write(Data("[selftest] error: \(error.localizedDescription)\n".utf8))
+            }
+            exit(0)
+        }
         dispatchMain()
     }
 

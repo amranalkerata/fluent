@@ -89,9 +89,21 @@ class AudioRecordingService: ObservableObject {
             throw RecordingError.microphonePermissionDenied
         }
 
+        do {
+            try await startEngine(usePreferredDevice: true)
+        } catch RecordingError.audioEngineStartFailed, RecordingError.noInputDevice {
+            // The preferred external mic refused to start (e.g. a Bluetooth headset
+            // still connecting) — fall back to the system default input.
+            try await startEngine(usePreferredDevice: false)
+        }
+    }
+
+    private func startEngine(usePreferredDevice: Bool) async throws {
         // Create audio engine
         let engine = AVAudioEngine()
-        await AudioDeviceManager.shared.configureDevice(on: engine)
+        if usePreferredDevice {
+            await AudioDeviceManager.shared.configureDevice(on: engine)
+        }
         let inputNode = engine.inputNode
 
         // Check for input device
