@@ -1,54 +1,24 @@
 import Foundation
-import OnnxRuntimeBindings
+import CoreML
+import NaturalLanguage
 import SentencepieceTokenizer
 
-/// State machine for punctuation model lifecycle
-/// Model is downloaded at runtime during onboarding
+/// Lifecycle of the bundled punctuation model.
+/// The model ships inside the app bundle, so there is no download step.
 enum PunctuationModelState: Equatable {
-    case notDownloaded          // Model not present on disk
-    case downloading(progress: Double)  // Currently downloading
-    case retrying(attempt: Int, maxAttempts: Int)  // Retrying after failure
-    case downloaded             // Downloaded but not loaded into memory
+    case notLoaded              // Bundled, not loaded into memory yet
     case loading                // Loading into memory
     case ready                  // Loaded and ready for inference
-    case error(String)          // Download or load failed
-
-    static func == (lhs: PunctuationModelState, rhs: PunctuationModelState) -> Bool {
-        switch (lhs, rhs) {
-        case (.notDownloaded, .notDownloaded),
-             (.downloaded, .downloaded),
-             (.loading, .loading),
-             (.ready, .ready):
-            return true
-        case (.downloading(let p1), .downloading(let p2)):
-            return p1 == p2
-        case (.retrying(let a1, let m1), .retrying(let a2, let m2)):
-            return a1 == a2 && m1 == m2
-        case (.error(let e1), .error(let e2)):
-            return e1 == e2
-        default:
-            return false
-        }
-    }
+    case error(String)          // Load failed
 
     var isReady: Bool {
         if case .ready = self { return true }
         return false
     }
 
-    var isDownloading: Bool {
-        if case .downloading = self { return true }
-        if case .retrying = self { return true }
+    var isLoading: Bool {
+        if case .loading = self { return true }
         return false
-    }
-
-    var isDownloaded: Bool {
-        switch self {
-        case .downloaded, .loading, .ready:
-            return true
-        default:
-            return false
-        }
     }
 
     var isError: Bool {
@@ -57,470 +27,457 @@ enum PunctuationModelState: Equatable {
     }
 }
 
-/// Manages the punctuation/capitalization ONNX model lifecycle
-/// Model: 1-800-BAD-CODE/punctuation_fullstop_truecase_english
-/// Downloaded at runtime during onboarding (~200 MB)
+/// Manages the bundled punctuation / true-casing / sentence-boundary model.
+/// Model: 1-800-BAD-CODE/xlm-roberta_punctuation_fullstop_truecase (Apache-2.0),
+/// converted to Core ML (see scripts/convert_punctuation_model.py). 47 languages including Arabic.
 @MainActor
 class PunctuationModelManager: ObservableObject {
     static let shared = PunctuationModelManager()
 
-    @Published private(set) var state: PunctuationModelState = .notDownloaded
-    @Published private(set) var downloadProgress: Double = 0
+    @Published private(set) var state: PunctuationModelState = .notLoaded
 
-    // ONNX Runtime session and tokenizer
-    private var ortEnv: ORTEnv?
-    private var ortSession: ORTSession?
-    private var tokenizer: SentencepieceTokenizer?
+    private var engine: PunctuationEngine?
+    private var loadTask: Task<PunctuationEngine, Error>?
 
-    // Download task for cancellation
-    private var downloadTask: Task<Void, Error>?
-
-    // Model configuration
-    private let maxLength = 256
-    private let postLabels = ["<NULL>", "<ACRONYM>", ".", ",", "?"]
-
-    // Model file names
-    private let onnxModelName = "punct_cap_seg_en"
-    private let vocabModelName = "spe_32k_lc_en"
-
-    // Download URL - Hugging Face (original model source)
-    private let modelDownloadURL = "https://huggingface.co/1-800-BAD-CODE/punctuation_fullstop_truecase_english/resolve/main/punct_cap_seg_en.onnx"
-
-    // Retry configuration (matches ModelManager)
-    private let maxRetryAttempts = 3
-    private let initialRetryDelay: TimeInterval = 2.0
-
-    private init() {
-        checkModelExists()
-    }
-
-    // MARK: - File Paths
-
-    /// Application Support directory for punctuation model
-    private var modelsDirectory: URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return appSupport.appendingPathComponent("Fluent/PunctuationModel", isDirectory: true)
-    }
-
-    /// Path to downloaded ONNX model
-    private var onnxModelPath: URL {
-        modelsDirectory.appendingPathComponent("\(onnxModelName).onnx")
-    }
-
-    /// Path to bundled vocabulary/tokenizer model (stays in bundle - only 576 KB)
-    private var vocabPath: String? {
-        Bundle.main.path(forResource: vocabModelName, ofType: "model")
-    }
-
-    /// Check if model file exists on disk
-    private var modelExistsOnDisk: Bool {
-        FileManager.default.fileExists(atPath: onnxModelPath.path)
-    }
-
-    /// Check if tokenizer is available in bundle
-    private var tokenizerExistsInBundle: Bool {
-        vocabPath != nil
-    }
-
-    // MARK: - State Check
-
-    private func checkModelExists() {
-        if modelExistsOnDisk {
-            state = .downloaded
-        } else {
-            state = .notDownloaded
-        }
-    }
-
-    // MARK: - Download Model
-
-    /// Download the punctuation model from GitHub Releases
-    func downloadModel() async throws {
-        guard !state.isDownloading && !state.isReady else { return }
-
-        // Wrap download in a Task so we can cancel it
-        downloadTask = Task {
-            try await performDownloadWithRetry()
-        }
-
-        do {
-            try await downloadTask?.value
-        } catch is CancellationError {
-            // User cancelled - don't throw, just reset state
-            return
-        } catch {
-            throw error
-        }
-    }
-
-    private func performDownloadWithRetry() async throws {
-        var lastError: Error?
-
-        // Create models directory
-        try FileManager.default.createDirectory(at: modelsDirectory, withIntermediateDirectories: true)
-
-        for attempt in 1...maxRetryAttempts {
-            // Check for cancellation before each attempt
-            try Task.checkCancellation()
-
-            // Only reset progress to 0 on first attempt
-            if attempt == 1 {
-                state = .downloading(progress: 0)
-                downloadProgress = 0
-            } else {
-                // On retry, show retrying state but preserve last progress
-                state = .retrying(attempt: attempt, maxAttempts: maxRetryAttempts)
-            }
-
-            do {
-                try await downloadModelFile()
-
-                // Check cancellation after download completes
-                try Task.checkCancellation()
-
-                state = .downloaded
-                downloadProgress = 1.0
-                return // Success - exit retry loop
-
-            } catch is CancellationError {
-                // Clean up partial download
-                try? FileManager.default.removeItem(at: onnxModelPath)
-                throw CancellationError()
-            } catch {
-                lastError = error
-
-                // Don't retry on last attempt
-                if attempt < maxRetryAttempts {
-                    // Exponential backoff: 2s, 4s, 8s...
-                    let delay = initialRetryDelay * pow(2.0, Double(attempt - 1))
-                    state = .retrying(attempt: attempt + 1, maxAttempts: maxRetryAttempts)
-
-                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-                }
-            }
-        }
-
-        // All retries exhausted
-        state = .error(lastError?.localizedDescription ?? "Download failed after \(maxRetryAttempts) attempts")
-        throw NSError(domain: "PunctuationModel", code: -1, userInfo: [NSLocalizedDescriptionKey: lastError?.localizedDescription ?? "Download failed"])
-    }
-
-    private func downloadModelFile() async throws {
-        guard let url = URL(string: modelDownloadURL) else {
-            throw NSError(domain: "PunctuationModel", code: -2, userInfo: [NSLocalizedDescriptionKey: "Invalid download URL"])
-        }
-
-        // Use URLSession with delegate for progress tracking
-        let (tempURL, response) = try await URLSession.shared.download(from: url, delegate: DownloadProgressDelegate { [weak self] progress in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                self.downloadProgress = progress
-                self.state = .downloading(progress: progress)
-            }
-        })
-
-        // Verify response
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200...299).contains(httpResponse.statusCode) else {
-            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
-            throw NSError(domain: "PunctuationModel", code: statusCode, userInfo: [NSLocalizedDescriptionKey: "Download failed with status \(statusCode)"])
-        }
-
-        // Move downloaded file to final location
-        try? FileManager.default.removeItem(at: onnxModelPath) // Remove any existing file
-        try FileManager.default.moveItem(at: tempURL, to: onnxModelPath)
-    }
-
-    /// Cancel an in-progress download
-    func cancelDownload() {
-        downloadTask?.cancel()
-        downloadTask = nil
-        state = .notDownloaded
-        downloadProgress = 0
-        // Clean up any partial download
-        try? FileManager.default.removeItem(at: onnxModelPath)
-    }
+    private init() {}
 
     // MARK: - Load Model
 
     func loadModel() async throws {
-        guard ortSession == nil else {
+        if engine != nil {
             state = .ready
             return
         }
 
-        guard state.isDownloaded else {
-            let error = NSError(domain: "PunctuationModel", code: -1, userInfo: [NSLocalizedDescriptionKey: "Model not downloaded"])
-            state = .error(error.localizedDescription)
-            throw error
-        }
-
-        guard tokenizerExistsInBundle else {
-            let error = NSError(domain: "PunctuationModel", code: -1, userInfo: [NSLocalizedDescriptionKey: "Tokenizer not found in bundle"])
-            state = .error(error.localizedDescription)
-            throw error
+        if let loadTask {
+            _ = try await loadTask.value
+            return
         }
 
         state = .loading
+        let task = Task.detached(priority: .userInitiated) {
+            try PunctuationEngine.loadFromBundle()
+        }
+        loadTask = task
 
         do {
-            guard let vocabModelPath = vocabPath else {
-                throw NSError(domain: "PunctuationModel", code: -2, userInfo: [NSLocalizedDescriptionKey: "Could not resolve vocab path"])
-            }
-
-            // Initialize ONNX Runtime environment (keep reference to prevent deallocation)
-            ortEnv = try ORTEnv(loggingLevel: ORTLoggingLevel.warning)
-
-            // Initialize ONNX Runtime session
-            ortSession = try ORTSession(
-                env: ortEnv!,
-                modelPath: onnxModelPath.path,
-                sessionOptions: nil
-            )
-
-            // Initialize SentencePiece tokenizer
-            tokenizer = try SentencepieceTokenizer(modelPath: vocabModelPath)
-
+            let loaded = try await task.value
+            engine = loaded
             state = .ready
+            loadTask = nil
         } catch {
+            loadTask = nil
             state = .error("Failed to load model: \(error.localizedDescription)")
             throw error
         }
     }
 
     func unloadModel() {
-        ortSession = nil
-        ortEnv = nil
-        tokenizer = nil
-        if state == .ready || state == .loading {
-            // Check if model still exists on disk
-            if modelExistsOnDisk {
-                state = .downloaded
-            } else {
-                state = .notDownloaded
-            }
-        }
-    }
-
-    /// Delete the downloaded model file
-    func deleteModel() {
-        unloadModel()
-        try? FileManager.default.removeItem(at: onnxModelPath)
-        state = .notDownloaded
-        downloadProgress = 0
+        loadTask?.cancel()
+        loadTask = nil
+        engine = nil
+        state = .notLoaded
     }
 
     // MARK: - Inference
 
-    /// Run punctuation inference on text
-    /// - Parameter text: Input text (can be any case, will be lowercased internally)
-    /// - Returns: Formatted text with punctuation and proper capitalization
+    /// Add punctuation, casing and sentence boundaries to text.
+    /// - Parameter text: Input text in any case; existing sentence punctuation is replaced.
+    /// - Returns: Formatted text.
     func infer(text: String) async throws -> String {
-        guard state.isReady, let session = ortSession, let tokenizer = tokenizer else {
-            throw NSError(domain: "PunctuationModel", code: -4, userInfo: [NSLocalizedDescriptionKey: "Model not ready"])
+        guard state.isReady, let engine else {
+            throw PunctuationEngine.EngineError.notReady
         }
-
-        // Lowercase input as model expects
-        let lowercasedText = text.lowercased()
-
-        // Tokenize - encode returns [Int] token IDs
-        let tokens = try tokenizer.encode(lowercasedText)
-        guard !tokens.isEmpty else { return text }
-
-        // Handle texts longer than maxLength by chunking
-        if tokens.count > maxLength {
-            return try await inferLongText(text: lowercasedText, session: session, tokenizer: tokenizer)
-        }
-
-        return try await runInference(tokens: tokens, originalWords: extractWords(from: lowercasedText), session: session)
-    }
-
-    private func extractWords(from text: String) -> [String] {
-        text.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
-    }
-
-    private func inferLongText(text: String, session: ORTSession, tokenizer: SentencepieceTokenizer) async throws -> String {
-        // Split into sentences or chunks and process separately
-        let words = extractWords(from: text)
-        var results: [String] = []
-        var currentChunk: [String] = []
-        var currentTokenCount = 0
-
-        for word in words {
-            let wordTokens = try tokenizer.encode(word)
-            if currentTokenCount + wordTokens.count > maxLength - 10 { // Leave buffer
-                // Process current chunk
-                let chunkText = currentChunk.joined(separator: " ")
-                let chunkTokens = try tokenizer.encode(chunkText)
-                let formatted = try await runInference(tokens: chunkTokens, originalWords: currentChunk, session: session)
-                results.append(formatted)
-
-                currentChunk = [word]
-                currentTokenCount = wordTokens.count
-            } else {
-                currentChunk.append(word)
-                currentTokenCount += wordTokens.count
-            }
-        }
-
-        // Process remaining chunk
-        if !currentChunk.isEmpty {
-            let chunkText = currentChunk.joined(separator: " ")
-            let chunkTokens = try tokenizer.encode(chunkText)
-            let formatted = try await runInference(tokens: chunkTokens, originalWords: currentChunk, session: session)
-            results.append(formatted)
-        }
-
-        return results.joined(separator: " ")
-    }
-
-    private func runInference(tokens: [Int], originalWords: [String], session: ORTSession) async throws -> String {
-        // Create input data as Int64 array
-        let inputData = tokens.map { Int64($0) }
-        let inputShape: [NSNumber] = [1, NSNumber(value: tokens.count)]
-
-        // Create input tensor for token IDs
-        let inputTensor = try ORTValue(
-            tensorData: NSMutableData(data: Data(bytes: inputData, count: tokens.count * MemoryLayout<Int64>.size)),
-            elementType: ORTTensorElementDataType.int64,
-            shape: inputShape
-        )
-
-        // Create attention mask tensor (all 1s)
-        let attentionData = [Int64](repeating: 1, count: tokens.count)
-        let attentionTensor = try ORTValue(
-            tensorData: NSMutableData(data: Data(bytes: attentionData, count: tokens.count * MemoryLayout<Int64>.size)),
-            elementType: ORTTensorElementDataType.int64,
-            shape: inputShape
-        )
-
-        // Run inference
-        let outputs = try session.run(
-            withInputs: ["input_ids": inputTensor, "attention_mask": attentionTensor],
-            outputNames: Set(["logits_pre", "logits_post", "logits_case"]),
-            runOptions: nil
-        )
-
-        // Decode outputs
-        guard let postLogits = outputs["logits_post"],
-              let caseLogits = outputs["logits_case"] else {
-            throw NSError(domain: "PunctuationModel", code: -5, userInfo: [NSLocalizedDescriptionKey: "Missing model outputs"])
-        }
-
-        // Extract predictions
-        let postPreds = try extractPredictions(from: postLogits, numClasses: postLabels.count)
-        let casePreds = try extractPredictions(from: caseLogits, numClasses: 2) // 0=lower, 1=upper
-
-        // Reconstruct text with punctuation and capitalization
-        return reconstructText(words: originalWords, postPreds: postPreds, casePreds: casePreds)
-    }
-
-    private func extractPredictions(from tensor: ORTValue, numClasses: Int) throws -> [Int] {
-        let data = try tensor.tensorData() as Data
-        let shape = try tensor.tensorTypeAndShapeInfo().shape
-        let seqLen = shape[1].intValue
-
-        // Logits shape: [batch, seq_len, num_classes]
-        var predictions: [Int] = []
-
-        data.withUnsafeBytes { (ptr: UnsafeRawBufferPointer) in
-            let floatPtr = ptr.bindMemory(to: Float.self)
-
-            for i in 0..<seqLen {
-                var maxIdx = 0
-                var maxVal = floatPtr[i * numClasses]
-
-                for c in 1..<numClasses {
-                    let val = floatPtr[i * numClasses + c]
-                    if val > maxVal {
-                        maxVal = val
-                        maxIdx = c
-                    }
-                }
-                predictions.append(maxIdx)
-            }
-        }
-
-        return predictions
-    }
-
-    private func reconstructText(words: [String], postPreds: [Int], casePreds: [Int]) -> String {
-        guard !words.isEmpty else { return "" }
-
-        var result: [String] = []
-        var predIndex = 0
-        var capitalizeNext = true // Start of text is always capitalized
-
-        for word in words {
-            guard predIndex < postPreds.count && predIndex < casePreds.count else { break }
-
-            var processedWord = word
-
-            // Apply capitalization
-            if capitalizeNext || casePreds[predIndex] == 1 {
-                processedWord = processedWord.capitalized
-                capitalizeNext = false
-            }
-
-            // Handle ACRONYM - capitalize all letters with periods
-            let postLabel = postPreds[predIndex]
-            if postLabel == 1 { // ACRONYM
-                processedWord = processedWord.uppercased().map { String($0) }.joined(separator: ".")
-                if !processedWord.hasSuffix(".") {
-                    processedWord += "."
-                }
-            }
-
-            result.append(processedWord)
-
-            // Apply punctuation after word
-            if postLabel >= 2 && postLabel < postLabels.count {
-                let punct = postLabels[postLabel]
-                if let last = result.last {
-                    result[result.count - 1] = last + punct
-                }
-
-                // Capitalize after sentence-ending punctuation
-                if punct == "." || punct == "?" {
-                    capitalizeNext = true
-                }
-            }
-
-            predIndex += 1
-        }
-
-        return result.joined(separator: " ")
+        // Tokenizing, prediction and decoding all run off the main actor.
+        return try await Task.detached(priority: .userInitiated) {
+            try engine.format(text)
+        }.value
     }
 
     // MARK: - Model Info
 
-    var modelSizeDescription: String {
-        "~200 MB"
+    /// Short, read-only description for the UI.
+    var modelSummary: String {
+        "Built-in · 47 languages including Arabic"
     }
 
+    var modelSizeDescription: String {
+        "Built-in"
+    }
+
+    /// The model is bundled with the app, so it is always available.
     var isModelDownloaded: Bool {
-        state.isDownloaded
+        true
     }
 }
 
-// MARK: - Download Progress Delegate
+// MARK: - Engine
 
-/// URLSession delegate to track download progress
-private class DownloadProgressDelegate: NSObject, URLSessionDownloadDelegate {
-    private let progressHandler: (Double) -> Void
+/// Holds the Core ML model and tokenizer and does the actual work.
+/// Thread-safe: all access to the model and tokenizer goes through `lock`.
+final class PunctuationEngine: @unchecked Sendable {
+    enum EngineError: LocalizedError {
+        case notReady
+        case resourceMissing(String)
+        case missingOutput(String)
 
-    init(progressHandler: @escaping (Double) -> Void) {
-        self.progressHandler = progressHandler
-        super.init()
+        var errorDescription: String? {
+            switch self {
+            case .notReady: return "Model not ready"
+            case .resourceMissing(let name): return "\(name) not found in app bundle"
+            case .missingOutput(let name): return "Model output \(name) missing"
+            }
+        }
     }
 
-    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
-        guard totalBytesExpectedToWrite > 0 else { return }
-        let progress = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
-        progressHandler(progress)
+    // Model contract (fixed input length, raw SentencePiece ids)
+    private static let maxLength = 256
+    private static let maxContentTokens = maxLength - 2   // BOS + EOS
+    private static let bosId: Int32 = 0
+    private static let padId: Int32 = 1
+    private static let eosId: Int32 = 2
+    private static let unkId = 3
+    private static let maxCharsPerPiece = 16
+
+    private static let nullLabel = 0
+    private static let acronymLabel = 1
+    private static let postLabels = ["<NULL>", "<ACRONYM>", ".", ",", "?", "？", "，", "。", "、", "・", "।", "؟", "،", ";", "።", "፣", "፧"]
+    private static let spanishQuestionPreLabel = 1
+
+    /// Sentence punctuation stripped from word ends before inference ("!" is kept).
+    private static let trailingPunctuation: Set<Character> = [".", ",", "?", ";", ":", "…", "؟", "،", "؛"]
+
+    private static let wordMarker: Character = "\u{2581}"   // "▁"
+
+    private let model: MLModel
+    private let tokenizer: SentencepieceTokenizer
+    private let lock = NSLock()
+
+    private init(model: MLModel, tokenizer: SentencepieceTokenizer) {
+        self.model = model
+        self.tokenizer = tokenizer
     }
 
-    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
-        // Handled by the async download call
+    static func loadFromBundle() throws -> PunctuationEngine {
+        guard let modelURL = Bundle.main.url(forResource: "PunctCapSeg", withExtension: "mlmodelc") else {
+            throw EngineError.resourceMissing("PunctCapSeg.mlmodelc")
+        }
+        guard let tokenizerPath = Bundle.main.path(forResource: "xlmr_punct_sp", ofType: "model") else {
+            throw EngineError.resourceMissing("xlmr_punct_sp.model")
+        }
+
+        let configuration = MLModelConfiguration()
+        // The model computes in FP32; the Neural Engine is FP16-only and flips the cap/seg heads.
+        // CPU only: ~50 ms per call from the first prediction. With the GPU the first prediction
+        // of every launch spends ~16 s specializing shaders (then ~15 ms per call).
+        configuration.computeUnits = .cpuOnly
+
+        let model = try MLModel(contentsOf: modelURL, configuration: configuration)
+        // This model uses raw SentencePiece ids (bos 0, pad 1, eos 2, unk 3).
+        let tokenizer = try SentencepieceTokenizer(modelPath: tokenizerPath, tokenOffset: 0)
+        return PunctuationEngine(model: model, tokenizer: tokenizer)
+    }
+
+    // MARK: - Formatting
+
+    private struct Word {
+        let text: String
+        var tokens: [Int]
+        /// Emit the input word as-is instead of rebuilding it from pieces
+        /// (unknown token or truncated word).
+        var useOriginalText: Bool
+    }
+
+    private struct Options {
+        let isSpanish: Bool
+        let isArabic: Bool
+    }
+
+    func format(_ text: String) throws -> String {
+        lock.lock()
+        defer { lock.unlock() }
+
+        let cleaned = Self.stripTrailingSentencePunctuation(text).lowercased()
+        let wordTexts = cleaned.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        guard !wordTexts.isEmpty else { return text }
+
+        let options = Options(
+            isSpanish: Self.isSpanish(cleaned),
+            isArabic: Self.isMainlyArabic(cleaned)
+        )
+
+        var words: [Word] = []
+        for wordText in wordTexts {
+            var tokens = try tokenizer.encode(wordText)
+            var useOriginal = tokens.contains(Self.unkId)
+            if tokens.count > Self.maxContentTokens {
+                tokens = Array(tokens.prefix(Self.maxContentTokens))
+                useOriginal = true
+            }
+            if tokens.isEmpty {
+                useOriginal = true
+            }
+            words.append(Word(text: wordText, tokens: tokens, useOriginalText: useOriginal))
+        }
+
+        // Split on word boundaries into chunks that fit the fixed model length.
+        var chunks: [[Word]] = []
+        var current: [Word] = []
+        var currentCount = 0
+        for word in words {
+            if !current.isEmpty && currentCount + word.tokens.count > Self.maxContentTokens {
+                chunks.append(current)
+                current = []
+                currentCount = 0
+            }
+            current.append(word)
+            currentCount += word.tokens.count
+        }
+        if !current.isEmpty { chunks.append(current) }
+
+        var results: [String] = []
+        for chunk in chunks {
+            // A chunk that continues an unfinished sentence keeps the model's own casing for its first word.
+            let continuesSentence = results.last.map { !Self.endsSentence($0) } ?? false
+            let formatted = try formatChunk(chunk, options: options, capitalizeStart: !continuesSentence)
+            if !formatted.isEmpty { results.append(formatted) }
+        }
+        let joined = results.joined(separator: " ")
+        return joined.isEmpty ? text : joined
+    }
+
+    private func formatChunk(_ words: [Word], options: Options, capitalizeStart: Bool) throws -> String {
+        let contentIds = words.flatMap { $0.tokens }
+        let n = contentIds.count + 2
+
+        let input = try MLMultiArray(shape: [1, NSNumber(value: Self.maxLength)], dataType: .int32)
+        let pointer = input.dataPointer.bindMemory(to: Int32.self, capacity: Self.maxLength)
+        let stride = input.strides[1].intValue
+        for i in 0..<Self.maxLength {
+            let value: Int32
+            if i == 0 {
+                value = Self.bosId
+            } else if i <= contentIds.count {
+                value = Int32(contentIds[i - 1])
+            } else if i == n - 1 {
+                value = Self.eosId
+            } else {
+                value = Self.padId
+            }
+            pointer[i * stride] = value
+        }
+
+        let provider = try MLDictionaryFeatureProvider(dictionary: ["input_ids": MLFeatureValue(multiArray: input)])
+        let output = try model.prediction(from: provider)
+
+        let pre = try Self.output(output, "pre_preds")
+        let post = try Self.output(output, "post_preds")
+        let cap = try Self.output(output, "cap_preds")
+        let seg = try Self.output(output, "seg_preds")
+
+        func value(_ array: MLMultiArray, _ i: Int) -> Int {
+            array[[0, NSNumber(value: i)] as [NSNumber]].intValue
+        }
+        func capValue(_ i: Int, _ j: Int) -> Int {
+            cap[[0, NSNumber(value: i), NSNumber(value: j)] as [NSNumber]].intValue
+        }
+
+        var sentences: [String] = []
+        var currentSentence = ""
+        var position = 1  // model position of the next token (0 is BOS)
+
+        for word in words {
+            let wordStart = position
+            position += word.tokens.count
+            let lastPosition = position - 1
+
+            if !currentSentence.isEmpty { currentSentence += " " }
+
+            if word.useOriginalText {
+                currentSentence += word.text
+                let postLabel = value(post, lastPosition)
+                if let label = postLabelText(postLabel, after: word.text, options: options) {
+                    currentSentence += label
+                }
+                if value(seg, lastPosition) == 1 && Self.endsSentence(currentSentence) {
+                    sentences.append(currentSentence)
+                    currentSentence = ""
+                }
+                continue
+            }
+
+            for (offset, tokenId) in word.tokens.enumerated() {
+                let i = wordStart + offset
+                let isWordEnd = i == lastPosition
+                let piece = try tokenizer.idToToken(tokenId)
+
+                let hasMarker = piece.first == Self.wordMarker
+                let start = hasMarker ? 1 : 0
+                let body = hasMarker ? String(piece.dropFirst()) : piece
+
+                // A bare "▁" piece carries no characters: ignore its labels.
+                if body.isEmpty { continue }
+
+                let preLabel = value(pre, i)
+                let postLabel = value(post, i)
+
+                if preLabel == Self.spanishQuestionPreLabel && options.isSpanish {
+                    currentSentence += "¿"
+                }
+
+                let applyAcronym = postLabel == Self.acronymLabel && Self.isLatinScript(body)
+
+                // Cap index counts characters including the leading "▁".
+                for (k, scalar) in body.unicodeScalars.enumerated() {
+                    let j = start + k
+                    if j < Self.maxCharsPerPiece && capValue(i, j) == 1 {
+                        currentSentence += String(scalar).uppercased()
+                    } else {
+                        currentSentence.unicodeScalars.append(scalar)
+                    }
+                    if applyAcronym {
+                        currentSentence += "."
+                    }
+                }
+
+                // Punctuation and sentence breaks only at word ends, never inside a word.
+                guard isWordEnd else { continue }
+
+                if !applyAcronym, let label = postLabelText(postLabel, after: body, options: options) {
+                    currentSentence += label
+                }
+
+                // Only break where the sentence really ends (not after "," or no punctuation).
+                if value(seg, i) == 1 && Self.endsSentence(currentSentence) {
+                    sentences.append(currentSentence)
+                    currentSentence = ""
+                }
+            }
+        }
+
+        if !currentSentence.isEmpty {
+            sentences.append(currentSentence)
+        }
+
+        return sentences
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .enumerated()
+            .map { index, sentence in
+                index == 0 && !capitalizeStart ? sentence : Self.capitalizingFirstLetter(sentence)
+            }
+            .joined(separator: " ")
+    }
+
+    private func postLabelText(_ label: Int, after text: String, options: Options) -> String? {
+        guard label != Self.nullLabel,
+              label != Self.acronymLabel,
+              label < Self.postLabels.count else { return nil }
+        // Don't stack a label on top of existing punctuation such as "!".
+        if let last = text.last, last.isPunctuation { return nil }
+
+        let punctuation = Self.postLabels[label]
+        guard options.isArabic else { return punctuation }
+        switch punctuation {
+        case ",": return "،"
+        case "?": return "؟"
+        case ";": return "؛"
+        default: return punctuation
+        }
+    }
+
+    private static func output(_ provider: MLFeatureProvider, _ name: String) throws -> MLMultiArray {
+        guard let array = provider.featureValue(for: name)?.multiArrayValue else {
+            throw EngineError.missingOutput(name)
+        }
+        return array
+    }
+
+    // MARK: - Text Helpers
+
+    /// Remove sentence punctuation at the end of words (followed by whitespace or end of text).
+    /// Punctuation inside tokens is kept (3.5, 10:30, URLs, emails), and so is "!".
+    static func stripTrailingSentencePunctuation(_ text: String) -> String {
+        let characters = Array(text)
+        var result = ""
+        result.reserveCapacity(text.count)
+        var i = 0
+        while i < characters.count {
+            let ch = characters[i]
+            if trailingPunctuation.contains(ch) {
+                var j = i
+                while j < characters.count && trailingPunctuation.contains(characters[j]) { j += 1 }
+                if j == characters.count || characters[j].isWhitespace {
+                    i = j
+                    continue
+                }
+                result.append(contentsOf: characters[i..<j])
+                i = j
+                continue
+            }
+            result.append(ch)
+            i += 1
+        }
+        return result
+    }
+
+    private static func isSpanish(_ text: String) -> Bool {
+        let recognizer = NLLanguageRecognizer()
+        recognizer.processString(text)
+        return recognizer.dominantLanguage == .spanish
+    }
+
+    private static func isMainlyArabic(_ text: String) -> Bool {
+        var arabic = 0
+        var letters = 0
+        for scalar in text.unicodeScalars where scalar.properties.isAlphabetic {
+            letters += 1
+            if isArabicScalar(scalar) { arabic += 1 }
+        }
+        return letters > 0 && arabic * 2 > letters
+    }
+
+    private static func isArabicScalar(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.value {
+        case 0x0600...0x06FF, 0x0750...0x077F, 0x08A0...0x08FF,
+             0xFB50...0xFDFF, 0xFE70...0xFEFF:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func isLatinScalar(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.value {
+        case 0x41...0x5A, 0x61...0x7A, 0xC0...0x24F, 0x1E00...0x1EFF:
+            return scalar.value != 0xD7 && scalar.value != 0xF7
+        default:
+            return false
+        }
+    }
+
+    /// True when the piece has letters and all of them are Latin.
+    private static func isLatinScript(_ text: String) -> Bool {
+        var hasLetter = false
+        for scalar in text.unicodeScalars where scalar.properties.isAlphabetic {
+            guard isLatinScalar(scalar) else { return false }
+            hasLetter = true
+        }
+        return hasLetter
+    }
+
+    private static let sentenceEndings: Set<Character> = [".", "?", "!", "؟", "？", "。", "।", "።", "፧", "…"]
+
+    private static func endsSentence(_ text: String) -> Bool {
+        guard let last = text.last else { return true }
+        return sentenceEndings.contains(last)
+    }
+
+    /// Upper-case the first letter of a sentence (skipping leading punctuation such as "¿" or quotes).
+    private static func capitalizingFirstLetter(_ sentence: String) -> String {
+        guard let index = sentence.firstIndex(where: { !$0.isPunctuation }) else { return sentence }
+        let ch = sentence[index]
+        guard ch.isLetter else { return sentence }
+        return sentence.replacingCharacters(in: index...index, with: ch.uppercased())
     }
 }

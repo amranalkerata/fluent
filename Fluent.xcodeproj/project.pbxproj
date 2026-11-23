@@ -52,11 +52,11 @@
 		046 /* TextFormattingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 146 /* TextFormattingService.swift */; };
 		047 /* PunctuationModelManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 147 /* PunctuationModelManager.swift */; };
 		050 /* ListFormattingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 150 /* ListFormattingService.swift */; };
-		049 /* spe_32k_lc_en.model in Resources */ = {isa = PBXBuildFile; fileRef = 149 /* spe_32k_lc_en.model */; };
-		15B0A7E92F2CF65E006AA075 /* onnxruntime in Frameworks */ = {isa = PBXBuildFile; productRef = 15B0A7E82F2CF65E006AA075 /* onnxruntime */; };
-		15B0A7EB2F2CF65E006AA075 /* onnxruntime_extensions in Frameworks */ = {isa = PBXBuildFile; productRef = 15B0A7EA2F2CF65E006AA075 /* onnxruntime_extensions */; };
 		15B0A7EE2F2CF685006AA075 /* SentencepieceTokenizer in Frameworks */ = {isa = PBXBuildFile; productRef = 15B0A7ED2F2CF685006AA075 /* SentencepieceTokenizer */; };
 		051 /* SystemAudioService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 151 /* SystemAudioService.swift */; };
+		052 /* AudioDeviceManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 152 /* AudioDeviceManager.swift */; };
+		053 /* PunctCapSeg.mlpackage in Sources */ = {isa = PBXBuildFile; fileRef = 153 /* PunctCapSeg.mlpackage */; };
+		054 /* xlmr_punct_sp.model in Resources */ = {isa = PBXBuildFile; fileRef = 154 /* xlmr_punct_sp.model */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -105,9 +105,11 @@
 		146 /* TextFormattingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextFormattingService.swift; sourceTree = "<group>"; };
 		147 /* PunctuationModelManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PunctuationModelManager.swift; sourceTree = "<group>"; };
 		150 /* ListFormattingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListFormattingService.swift; sourceTree = "<group>"; };
-		149 /* spe_32k_lc_en.model */ = {isa = PBXFileReference; lastKnownFileType = file; path = spe_32k_lc_en.model; sourceTree = "<group>"; };
 		15C981DD2F190AE800C28913 /* File.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = File.txt; sourceTree = "<group>"; };
 		151 /* SystemAudioService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemAudioService.swift; sourceTree = "<group>"; };
+		152 /* AudioDeviceManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioDeviceManager.swift; sourceTree = "<group>"; };
+		153 /* PunctCapSeg.mlpackage */ = {isa = PBXFileReference; lastKnownFileType = folder.mlpackage; path = PunctCapSeg.mlpackage; sourceTree = "<group>"; };
+		154 /* xlmr_punct_sp.model */ = {isa = PBXFileReference; lastKnownFileType = file; path = xlmr_punct_sp.model; sourceTree = "<group>"; };
 		900 /* Fluent.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Fluent.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -117,9 +119,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				15B0A7EE2F2CF685006AA075 /* SentencepieceTokenizer in Frameworks */,
-				15B0A7E92F2CF65E006AA075 /* onnxruntime in Frameworks */,
 				045 /* WhisperKit in Frameworks */,
-				15B0A7EB2F2CF65E006AA075 /* onnxruntime_extensions in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -215,7 +215,8 @@
 		209 /* Models */ = {
 			isa = PBXGroup;
 			children = (
-				149 /* spe_32k_lc_en.model */,
+				153 /* PunctCapSeg.mlpackage */,
+				154 /* xlmr_punct_sp.model */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -249,6 +250,7 @@
 			isa = PBXGroup;
 			children = (
 				108 /* AudioRecordingService.swift */,
+				152 /* AudioDeviceManager.swift */,
 				142 /* SoundService.swift */,
 				145 /* AudioConverter.swift */,
 			);
@@ -367,8 +369,6 @@
 			name = Fluent;
 			packageProductDependencies = (
 				500 /* WhisperKit */,
-				15B0A7E82F2CF65E006AA075 /* onnxruntime */,
-				15B0A7EA2F2CF65E006AA075 /* onnxruntime_extensions */,
 				15B0A7ED2F2CF685006AA075 /* SentencepieceTokenizer */,
 			);
 			productName = Fluent;
@@ -401,7 +401,6 @@
 			mainGroup = 000;
 			packageReferences = (
 				501 /* XCRemoteSwiftPackageReference "WhisperKit" */,
-				15B0A7E72F2CF65E006AA075 /* XCRemoteSwiftPackageReference "onnxruntime-swift-package-manager" */,
 				15B0A7EC2F2CF685006AA075 /* XCRemoteSwiftPackageReference "swift-sentencepiece" */,
 			);
 			productRefGroup = 901 /* Products */;
@@ -420,7 +419,7 @@
 			files = (
 				040 /* Assets.xcassets in Resources */,
 				042 /* sound.m4a in Resources */,
-				049 /* spe_32k_lc_en.model in Resources */,
+				054 /* xlmr_punct_sp.model in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -471,9 +470,11 @@
 				041 /* SoundService.swift in Sources */,
 				043 /* ModelManager.swift in Sources */,
 				044 /* AudioConverter.swift in Sources */,
+				052 /* AudioDeviceManager.swift in Sources */,
 				046 /* TextFormattingService.swift in Sources */,
 				047 /* PunctuationModelManager.swift in Sources */,
 				050 /* ListFormattingService.swift in Sources */,
+				053 /* PunctCapSeg.mlpackage in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -692,14 +693,6 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		15B0A7E72F2CF65E006AA075 /* XCRemoteSwiftPackageReference "onnxruntime-swift-package-manager" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/microsoft/onnxruntime-swift-package-manager";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 1.20.0;
-			};
-		};
 		15B0A7EC2F2CF685006AA075 /* XCRemoteSwiftPackageReference "swift-sentencepiece" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/jkrukowski/swift-sentencepiece";
@@ -719,16 +712,6 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		15B0A7E82F2CF65E006AA075 /* onnxruntime */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 15B0A7E72F2CF65E006AA075 /* XCRemoteSwiftPackageReference "onnxruntime-swift-package-manager" */;
-			productName = onnxruntime;
-		};
-		15B0A7EA2F2CF65E006AA075 /* onnxruntime_extensions */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 15B0A7E72F2CF65E006AA075 /* XCRemoteSwiftPackageReference "onnxruntime-swift-package-manager" */;
-			productName = onnxruntime_extensions;
-		};
 		15B0A7ED2F2CF685006AA075 /* SentencepieceTokenizer */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 15B0A7EC2F2CF685006AA075 /* XCRemoteSwiftPackageReference "swift-sentencepiece" */;

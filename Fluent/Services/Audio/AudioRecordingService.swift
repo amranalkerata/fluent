@@ -41,6 +41,7 @@ class AudioRecordingService: ObservableObject {
 
     private var audioEngine: AVAudioEngine?
     private var audioFile: AVAudioFile?
+    private var audioFileCreated = false
     private var recordingURL: URL?
 
     private var levelPublisher = PassthroughSubject<Float, Never>()
@@ -90,14 +91,13 @@ class AudioRecordingService: ObservableObject {
 
         // Create audio engine
         let engine = AVAudioEngine()
+        await AudioDeviceManager.shared.configureDevice(on: engine)
         let inputNode = engine.inputNode
 
         // Check for input device
         guard inputNode.inputFormat(forBus: 0).channelCount > 0 else {
             throw RecordingError.noInputDevice
         }
-
-        let format = inputNode.outputFormat(forBus: 0)
 
         // Create recording directory if needed
         let recordingDirectory = getRecordingDirectory()
@@ -107,55 +107,52 @@ class AudioRecordingService: ObservableObject {
         let fileName = "recording_\(Int(Date().timeIntervalSince1970)).m4a"
         recordingURL = recordingDirectory.appendingPathComponent(fileName)
 
-        guard let url = recordingURL else {
-            throw RecordingError.fileCreationFailed
-        }
-
-        // Audio settings for M4A (AAC)
-        let settings: [String: Any] = [
-            AVFormatIDKey: kAudioFormatMPEG4AAC,
-            AVSampleRateKey: format.sampleRate,
-            AVNumberOfChannelsKey: format.channelCount,
-            AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
-            AVEncoderBitRateKey: 128000
-        ]
-
-        do {
-            audioFile = try AVAudioFile(
-                forWriting: url,
-                settings: settings,
-                commonFormat: format.commonFormat,
-                interleaved: format.isInterleaved
-            )
-        } catch {
-            throw RecordingError.fileCreationFailed
-        }
-
         // Create async stream for real-time audio samples (for streaming transcription)
         audioStream = AsyncStream { continuation in
             self.audioBufferContinuation = continuation
         }
 
         // Install tap for recording and level monitoring
-        inputNode.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
+        // format: nil lets AVAudioEngine use the node's native hardware format,
+        // which correctly reflects the actual device (AirPods @ 16kHz or built-in @ 48kHz)
+        audioFileCreated = false
+
+        inputNode.installTap(onBus: 0, bufferSize: 4096, format: nil) { [weak self] buffer, _ in
             guard let self = self else { return }
+
+            // Lazily create audio file on first buffer using actual hardware format
+            if self.audioFile == nil && !self.audioFileCreated {
+                self.audioFileCreated = true
+                if let url = self.recordingURL {
+                    let fmt = buffer.format
+                    let settings: [String: Any] = [
+                        AVFormatIDKey: kAudioFormatMPEG4AAC,
+                        AVSampleRateKey: fmt.sampleRate,
+                        AVNumberOfChannelsKey: fmt.channelCount,
+                        AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
+                        AVEncoderBitRateKey: 128000
+                    ]
+                    self.audioFile = try? AVAudioFile(
+                        forWriting: url,
+                        settings: settings,
+                        commonFormat: fmt.commonFormat,
+                        interleaved: fmt.isInterleaved
+                    )
+                }
+            }
 
             // Write to file
             do {
                 try self.audioFile?.write(from: buffer)
-            } catch {
-                // Silently handle buffer write errors
-            }
+            } catch {}
 
             // Calculate RMS level for waveform
             let level = self.calculateRMSLevel(buffer: buffer)
             self.levelPublisher.send(level)
-
-            // Collect levels for silence detection
             self.allLevelSamples.append(level)
 
             // Stream PCM samples for real-time transcription
-            if let samples = self.convertToWhisperFormat(buffer: buffer, sourceFormat: format) {
+            if let samples = self.convertToWhisperFormat(buffer: buffer, sourceFormat: buffer.format) {
                 self.audioBufferContinuation?.yield(samples)
             }
         }
@@ -188,6 +185,7 @@ class AudioRecordingService: ObservableObject {
         audioEngine?.stop()
         audioEngine = nil
         audioFile = nil
+        audioFileCreated = false
 
         isRecording = false
         durationTimer?.invalidate()

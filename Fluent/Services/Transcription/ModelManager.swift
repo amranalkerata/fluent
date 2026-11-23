@@ -74,7 +74,11 @@ class ModelManager: ObservableObject {
     private var downloadTask: Task<Void, Error>?
 
     // WhisperKit model configuration
-    private let modelName = "small"  // Options: tiny, base, small, medium, large
+    // OpenAI Whisper large-v3-turbo (Sept 2024 release), ~626 MB Core ML variant.
+    // Much better Arabic accuracy than `small`; officially supported on M-series Macs.
+    private let modelName = "large-v3-v20240930_626MB"
+    /// Folder of the model used by earlier versions, removed after upgrading
+    private let legacyModelFolderName = "openai_whisper-small"
     private let modelRepo = "argmaxinc/whisperkit-coreml"
 
     // Retry configuration
@@ -83,6 +87,9 @@ class ModelManager: ObservableObject {
 
     private init() {
         checkModelExists()
+        if isModelDownloaded {
+            removeLegacyModel()
+        }
     }
 
     // MARK: - Model Directory
@@ -94,6 +101,13 @@ class ModelManager: ObservableObject {
 
     private var modelPath: URL {
         modelsDirectory.appendingPathComponent("openai_whisper-\(modelName)")
+    }
+
+    /// Best-effort removal of the old `small` model folder to free disk space
+    private func removeLegacyModel() {
+        let legacyPath = modelsDirectory.appendingPathComponent(legacyModelFolderName)
+        guard FileManager.default.fileExists(atPath: legacyPath.path) else { return }
+        try? FileManager.default.removeItem(at: legacyPath)
     }
 
     // MARK: - State Check
@@ -186,10 +200,19 @@ class ModelManager: ObservableObject {
                         at: modelFolder,
                         to: destinationPath
                     )
+                    // The app loads from destinationPath only, so drop WhisperKit's
+                    // download cache copy (and the old `small` one next to it)
+                    // instead of keeping every model twice on disk.
+                    try? FileManager.default.removeItem(at: modelFolder)
+                    try? FileManager.default.removeItem(
+                        at: modelFolder.deletingLastPathComponent()
+                            .appendingPathComponent(legacyModelFolderName)
+                    )
                 }
 
                 state = .downloaded
                 downloadProgress = 1.0
+                removeLegacyModel()
                 return // Success - exit retry loop
 
             } catch is CancellationError {
@@ -400,7 +423,7 @@ class ModelManager: ObservableObject {
     // MARK: - Model Info
 
     var modelSizeDescription: String {
-        "~150 MB"  // Core ML optimized model
+        "~630 MB"  // Core ML optimized model
     }
 
     var isModelDownloaded: Bool {

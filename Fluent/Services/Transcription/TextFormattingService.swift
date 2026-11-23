@@ -1,7 +1,7 @@
 import Foundation
 
 /// Service for formatting transcribed text with punctuation and capitalization
-/// Uses an ONNX-based punctuation model for ML inference
+/// Uses the bundled multilingual Core ML punctuation model for every language
 class TextFormattingService {
     private let settingsService = SettingsService.shared
     private let listFormattingService = ListFormattingService()
@@ -14,24 +14,21 @@ class TextFormattingService {
         guard settingsService.settings.formatTextEnabled else {
             return text
         }
+        return await formatIgnoringSetting(text: text)
+    }
 
-        // Check if model is downloaded and ready
+    /// Format text regardless of the "Format Text" setting
+    /// (used by `format(text:)` and the DEBUG self-test)
+    func formatIgnoringSetting(text: String) async -> String {
         let modelManager = await PunctuationModelManager.shared
 
-        // If model not downloaded (user deleted it), gracefully degrade
-        guard await modelManager.isModelDownloaded else {
-            // Apply list formatting only, skip punctuation
-            return listFormattingService.format(text: text)
-        }
-
-        // If model downloaded but not loaded, try to load it
+        // Load the bundled model on first use
         if await !modelManager.state.isReady {
             try? await modelManager.loadModel()
         }
 
-        // Check again if model is ready after potential load
+        // Model failed to load - formatting is non-critical, apply list formatting only
         guard await modelManager.state.isReady else {
-            // Model not ready - silently return with list formatting only
             return listFormattingService.format(text: text)
         }
 
@@ -40,9 +37,7 @@ class TextFormattingService {
             formatted = formatted.isEmpty ? text : formatted
 
             // Always apply list formatting (after punctuation)
-            formatted = listFormattingService.format(text: formatted)
-
-            return formatted
+            return listFormattingService.format(text: formatted)
         } catch {
             // Formatting is non-critical - silently return original text
             // Still apply list formatting even if punctuation fails
@@ -55,25 +50,16 @@ class TextFormattingService {
         await PunctuationModelManager.shared.state.isReady
     }
 
-    /// Check if the punctuation model is downloaded
-    func isModelDownloaded() async -> Bool {
-        await PunctuationModelManager.shared.isModelDownloaded
-    }
-
     /// Ensure punctuation model is loaded (call lazily on first format request)
     func ensureModelLoaded() async {
         let modelManager = await PunctuationModelManager.shared
         let state = await modelManager.state
 
         switch state {
-        case .ready:
+        case .ready, .loading:
             return
-        case .downloaded:
-            // Model is downloaded - load it into memory
+        case .notLoaded, .error:
             try? await modelManager.loadModel()
-        case .notDownloaded, .downloading, .retrying, .loading, .error:
-            // Model not available or already loading - don't block
-            return
         }
     }
 }

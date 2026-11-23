@@ -79,7 +79,7 @@ struct ModelSettingsCard: View {
                     )
 
                 VStack(alignment: .leading, spacing: FluentSpacing.xxs) {
-                    Text("Whisper Small Model")
+                    Text("Whisper Large v3 Turbo")
                         .font(.Fluent.titleSmall)
 
                     Text(statusText)
@@ -122,7 +122,7 @@ struct ModelSettingsCard: View {
                             .font(.Fluent.caption)
                             .foregroundStyle(FluentColors.textSecondary)
 
-                        Text("Small model - Better accuracy for multilingual")
+                        Text("Large v3 Turbo - High accuracy for Arabic and multilingual")
                             .font(.Fluent.caption)
                             .foregroundStyle(FluentColors.textTertiary)
                     }
@@ -267,51 +267,24 @@ struct TranscriptionSettingsCard: View {
 
 struct PunctuationModelRow: View {
     @ObservedObject var punctuationManager: PunctuationModelManager
-    @State private var showingDeleteConfirmation = false
 
     var body: some View {
-        VStack(spacing: FluentSpacing.sm) {
-            HStack(spacing: FluentSpacing.sm) {
-                // Status icon
-                Image(systemName: statusIcon)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(statusColor)
+        HStack(spacing: FluentSpacing.sm) {
+            Image(systemName: statusIcon)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(statusColor)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Punctuation Model")
-                        .font(.Fluent.caption)
-                        .foregroundStyle(FluentColors.textSecondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Punctuation Model")
+                    .font(.Fluent.caption)
+                    .foregroundStyle(FluentColors.textSecondary)
 
-                    Text(statusText)
-                        .font(.Fluent.monoSmall)
-                        .foregroundStyle(FluentColors.textTertiary)
-                }
-
-                Spacer()
-
-                actionButton
+                Text(statusText)
+                    .font(.Fluent.monoSmall)
+                    .foregroundStyle(FluentColors.textTertiary)
             }
 
-            // Progress bar when downloading
-            if case .downloading(let progress) = punctuationManager.state {
-                ProgressView(value: progress)
-                    .progressViewStyle(.linear)
-            }
-
-            // Delete button when downloaded
-            if punctuationManager.isModelDownloaded {
-                HStack {
-                    Text(punctuationManager.modelSizeDescription)
-                        .font(.Fluent.monoSmall)
-                        .foregroundStyle(FluentColors.textTertiary)
-
-                    Spacer()
-
-                    FluentButton("Delete", icon: "trash", variant: .destructive, size: .small) {
-                        showingDeleteConfirmation = true
-                    }
-                }
-            }
+            Spacer()
         }
         .padding(.horizontal, FluentSpacing.sm)
         .padding(.vertical, FluentSpacing.xs)
@@ -319,92 +292,21 @@ struct PunctuationModelRow: View {
             RoundedRectangle(cornerRadius: FluentRadius.sm)
                 .fill(FluentColors.surfaceSecondary)
         )
-        .alert("Delete Punctuation Model?", isPresented: $showingDeleteConfirmation) {
-            Button("Cancel", role: .cancel) { }
-            Button("Delete", role: .destructive) {
-                punctuationManager.deleteModel()
-            }
-        } message: {
-            Text("This will delete the punctuation model (~200 MB). Text formatting will be disabled until you re-download it.")
-        }
     }
 
     private var statusIcon: String {
-        switch punctuationManager.state {
-        case .notDownloaded:
-            return "arrow.down.circle"
-        case .downloading, .retrying:
-            return "arrow.down.circle"
-        case .downloaded:
-            return "checkmark.circle"
-        case .loading:
-            return "arrow.clockwise.circle"
-        case .ready:
-            return "checkmark.circle.fill"
-        case .error:
-            return "exclamationmark.circle.fill"
-        }
+        punctuationManager.state.isError ? "exclamationmark.circle.fill" : "checkmark.circle.fill"
     }
 
     private var statusColor: Color {
-        switch punctuationManager.state {
-        case .notDownloaded:
-            return FluentColors.warning
-        case .downloading, .retrying, .loading:
-            return FluentColors.primary
-        case .downloaded, .ready:
-            return FluentColors.success
-        case .error:
-            return FluentColors.error
-        }
+        punctuationManager.state.isError ? FluentColors.error : FluentColors.success
     }
 
     private var statusText: String {
-        switch punctuationManager.state {
-        case .notDownloaded:
-            return "Not downloaded"
-        case .downloading(let progress):
-            return "Downloading... \(Int(progress * 100))%"
-        case .retrying(let attempt, let max):
-            return "Retrying (\(attempt)/\(max))..."
-        case .downloaded:
-            return "Downloaded - tap Load"
-        case .loading:
-            return "Loading..."
-        case .ready:
-            return "Ready"
-        case .error(let message):
+        if case .error(let message) = punctuationManager.state {
             return "Error: \(message)"
         }
-    }
-
-    @ViewBuilder
-    private var actionButton: some View {
-        switch punctuationManager.state {
-        case .notDownloaded, .error:
-            FluentButton("Download", icon: "arrow.down.circle", variant: .primary, size: .small) {
-                Task {
-                    try? await punctuationManager.downloadModel()
-                }
-            }
-        case .downloading, .retrying:
-            FluentButton("Cancel", icon: "xmark", variant: .secondary, size: .small) {
-                punctuationManager.cancelDownload()
-            }
-        case .downloaded:
-            FluentButton("Load", icon: "play.fill", variant: .primary, size: .small) {
-                Task {
-                    try? await punctuationManager.loadModel()
-                }
-            }
-        case .loading:
-            ProgressView()
-                .controlSize(.small)
-        case .ready:
-            FluentButton("Unload", variant: .secondary, size: .small) {
-                punctuationManager.unloadModel()
-            }
-        }
+        return punctuationManager.modelSummary
     }
 }
 

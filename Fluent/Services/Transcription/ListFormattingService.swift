@@ -26,6 +26,16 @@ class ListFormattingService {
     /// Prefixes that can precede numbers (number one, item two, step three...)
     private let listPrefixes = ["number", "item", "point", "step"]
 
+    /// Arabic ordinal adverbs (أولا، ثانيا، ثالثا...), stored in normalized form
+    /// (no tashkeel, أ/إ/آ folded to ا) - see `normalizeArabic`
+    private let arabicOrdinals = [
+        "اولا": 1, "ثانيا": 2, "ثالثا": 3, "رابعا": 4, "خامسا": 5,
+        "سادسا": 6, "سابعا": 7, "ثامنا": 8, "تاسعا": 9, "عاشرا": 10
+    ]
+
+    /// Punctuation trimmed around list items (Latin and Arabic)
+    private let itemPunctuation = CharacterSet(charactersIn: ".,;:،؛")
+
     // MARK: - Public API
 
     /// Detect and format lists in transcribed text
@@ -37,6 +47,9 @@ class ListFormattingService {
             return formatted
         }
         if let formatted = detectOrdinalList(text) {
+            return formatted
+        }
+        if let formatted = detectArabicOrdinalList(text) {
             return formatted
         }
         if let formatted = detectOrdinalVariantList(text) {
@@ -71,6 +84,11 @@ class ListFormattingService {
         return detectListWithPattern(text: text, indicators: ordinals, prefixPattern: nil)
     }
 
+    /// Detect pattern: "أولا X ثانيا Y ثالثا Z" (also "وثانيا", with or without tashkeel)
+    private func detectArabicOrdinalList(_ text: String) -> String? {
+        return detectListWithPattern(text: text, indicators: arabicOrdinals, prefixPattern: nil, arabicNormalization: true)
+    }
+
     /// Detect pattern: "firstly X secondly Y thirdly Z"
     private func detectOrdinalVariantList(_ text: String) -> String? {
         return detectListWithPattern(text: text, indicators: ordinalVariants, prefixPattern: nil)
@@ -88,11 +106,14 @@ class ListFormattingService {
     ///   - text: The text to search
     ///   - indicators: Dictionary mapping indicator words to their numeric values
     ///   - prefixPattern: Optional prefix that must precede the indicator (e.g., "number" for "number one")
+    ///   - arabicNormalization: Normalize Arabic words before matching (strip tashkeel,
+    ///     fold أ/إ/آ to ا, allow a leading "و")
     /// - Returns: Formatted text if a valid list is found, nil otherwise
     private func detectListWithPattern(
         text: String,
         indicators: [String: Int],
-        prefixPattern: String?
+        prefixPattern: String?,
+        arabicNormalization: Bool = false
     ) -> String? {
         let words = tokenize(text)
         var listItems: [(number: Int, startIndex: Int, endIndex: Int, content: String)] = []
@@ -114,7 +135,10 @@ class ListFormattingService {
             } else {
                 // Direct indicator match
                 let cleanWord = word.text.lowercased().trimmingCharacters(in: CharacterSet.punctuationCharacters)
-                if let number = indicators[cleanWord] {
+                let number = arabicNormalization
+                    ? arabicIndicatorValue(cleanWord, indicators: indicators)
+                    : indicators[cleanWord]
+                if let number {
                     listItems.append((number: number, startIndex: word.position, endIndex: word.position + word.text.count, content: ""))
                     i += 1
                     continue
@@ -143,6 +167,34 @@ class ListFormattingService {
     }
 
     // MARK: - Helper Methods
+
+    /// Look up an Arabic indicator, allowing a leading conjunction "و" (e.g. "وثانيا")
+    private func arabicIndicatorValue(_ word: String, indicators: [String: Int]) -> Int? {
+        let normalized = normalizeArabic(word)
+        if let number = indicators[normalized] {
+            return number
+        }
+        if normalized.hasPrefix("و") {
+            return indicators[String(normalized.dropFirst())]
+        }
+        return nil
+    }
+
+    /// Strip tashkeel (U+064B–U+0652, U+0670) and fold أ/إ/آ to ا
+    private func normalizeArabic(_ word: String) -> String {
+        var scalars = String.UnicodeScalarView()
+        for scalar in word.unicodeScalars {
+            switch scalar.value {
+            case 0x064B...0x0652, 0x0670:
+                continue
+            case 0x0623, 0x0625, 0x0622:  // أ إ آ
+                scalars.append("\u{0627}")
+            default:
+                scalars.append(scalar)
+            }
+        }
+        return String(scalars)
+    }
 
     /// Token representing a word and its position in the original text
     private struct Token {
@@ -227,7 +279,7 @@ class ListFormattingService {
                 .trimmingCharacters(in: .whitespaces)
 
             // Remove leading/trailing punctuation from content
-            content = content.trimmingCharacters(in: CharacterSet(charactersIn: ".,;:"))
+            content = content.trimmingCharacters(in: itemPunctuation)
                 .trimmingCharacters(in: .whitespaces)
 
             // Capitalize first letter
@@ -256,7 +308,7 @@ class ListFormattingService {
                 .trimmingCharacters(in: .whitespaces)
 
             // Clean up prefix - remove trailing punctuation if it ends with list-like patterns
-            prefix = prefix.trimmingCharacters(in: CharacterSet(charactersIn: ".,;:"))
+            prefix = prefix.trimmingCharacters(in: itemPunctuation)
                 .trimmingCharacters(in: .whitespaces)
         }
 

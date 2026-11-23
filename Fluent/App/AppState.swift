@@ -45,6 +45,7 @@ class AppState: ObservableObject {
     private var isStoppingRecording = false // Prevent duplicate stop Tasks
 
     init() {
+        _ = AudioDeviceManager.shared  // Start listening for audio device changes early
         setupBindings()
         setupNotificationObservers()
         checkOnboardingStatus()
@@ -87,11 +88,11 @@ class AppState: ObservableObject {
     }
 
     private func checkOnboardingStatus() {
-        // Show onboarding if not completed or either model not downloaded
+        // Show onboarding if not completed or the Whisper model is not downloaded
+        // (the punctuation model is bundled with the app)
         let whisperReady = ModelManager.shared.isModelDownloaded
-        let punctuationReady = PunctuationModelManager.shared.isModelDownloaded
 
-        if !SettingsService.shared.isOnboardingComplete || !whisperReady || !punctuationReady {
+        if !SettingsService.shared.isOnboardingComplete || !whisperReady {
             showOnboarding = true
         } else {
             // Load models on app start and track completion
@@ -111,7 +112,7 @@ class AppState: ObservableObject {
             }
 
             // Load punctuation model if format text is enabled
-            // Model is already downloaded during onboarding, just need to load from disk
+            // Model is bundled with the app, just need to load it into memory
             if settingsService.settings.formatTextEnabled {
                 try? await PunctuationModelManager.shared.loadModel()
             }
@@ -121,7 +122,6 @@ class AppState: ObservableObject {
     /// Load punctuation model on demand (called when format text setting is toggled on)
     func loadPunctuationModelIfNeeded() {
         guard settingsService.settings.formatTextEnabled else { return }
-        guard PunctuationModelManager.shared.isModelDownloaded else { return }
 
         Task {
             try? await PunctuationModelManager.shared.loadModel()
@@ -196,6 +196,7 @@ class AppState: ObservableObject {
                 // (streaming had O(n²) complexity, re-transcribing all audio every second)
             } catch {
                 transcriptionError = "Failed to start recording: \(error.localizedDescription)"
+                showLoadingOverlay()  // Show error so user knows what happened
                 workflowInProgress = false // Release lock on failure
             }
         }
