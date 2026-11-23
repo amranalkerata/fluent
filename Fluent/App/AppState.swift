@@ -116,6 +116,10 @@ class AppState: ObservableObject {
             if settingsService.settings.formatTextEnabled {
                 try? await PunctuationModelManager.shared.loadModel()
             }
+
+            // Then the Audar Arabic engine, if downloaded, switched on and licensed.
+            // It loads in the background; recordings use Whisper until it is ready.
+            AudarModelManager.shared.loadIfConfigured()
         }
     }
 
@@ -157,9 +161,12 @@ class AppState: ObservableObject {
             return
         }
 
-        // Check if model is ready - provide specific feedback based on state
+        // Check if model is ready - provide specific feedback based on state.
+        // Arabic and auto-detect can also run on Audar alone.
         let modelState = ModelManager.shared.state
-        guard modelState.isReady else {
+        let language = settingsService.settings.language
+        let audarCanTranscribe = AudarModelManager.shared.isUsable && (language == .arabic || language == .auto)
+        guard modelState.isReady || audarCanTranscribe else {
             switch modelState {
             case .loading:
                 transcriptionError = "Model is still loading, please wait a moment..."

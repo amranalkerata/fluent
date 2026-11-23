@@ -6,6 +6,14 @@ struct AppSettings: Codable, Equatable {
     var formatTextEnabled: Bool = true
     var formatListsEnabled: Bool = true
 
+    // MARK: - Speech Engine Settings
+    /// Send Arabic speech to the offline Audar model once it is downloaded.
+    var audarEnabled: Bool = true
+    /// When the user accepted the AudarAI Community License (nil = not accepted).
+    var audarLicenseAcceptedAt: Date? = nil
+
+    var audarLicenseAccepted: Bool { audarLicenseAcceptedAt != nil }
+
     // MARK: - Behavior Settings
     var autoPasteEnabled: Bool = true
     var showRecordingOverlay: Bool = true
@@ -110,5 +118,34 @@ struct AppSettings: Codable, Equatable {
 
     static var `default`: AppSettings {
         AppSettings()
+    }
+}
+
+// MARK: - Decoding
+
+extension AppSettings {
+    private enum CodingKeys: String, CodingKey {
+        case language, formatTextEnabled, formatListsEnabled
+        case audarEnabled, audarLicenseAcceptedAt
+        case autoPasteEnabled, showRecordingOverlay, launchAtLogin, removeFromDockOnClose
+        case overlayPosition, audioQuality
+    }
+
+    /// Every key is optional so settings saved by an older version (without newer keys)
+    /// still load instead of silently falling back to the defaults.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let defaults = AppSettings()
+        language = try container.decodeIfPresent(TranscriptionLanguage.self, forKey: .language) ?? defaults.language
+        formatTextEnabled = try container.decodeIfPresent(Bool.self, forKey: .formatTextEnabled) ?? defaults.formatTextEnabled
+        formatListsEnabled = try container.decodeIfPresent(Bool.self, forKey: .formatListsEnabled) ?? defaults.formatListsEnabled
+        audarEnabled = try container.decodeIfPresent(Bool.self, forKey: .audarEnabled) ?? defaults.audarEnabled
+        audarLicenseAcceptedAt = try container.decodeIfPresent(Date.self, forKey: .audarLicenseAcceptedAt)
+        autoPasteEnabled = try container.decodeIfPresent(Bool.self, forKey: .autoPasteEnabled) ?? defaults.autoPasteEnabled
+        showRecordingOverlay = try container.decodeIfPresent(Bool.self, forKey: .showRecordingOverlay) ?? defaults.showRecordingOverlay
+        launchAtLogin = try container.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? defaults.launchAtLogin
+        removeFromDockOnClose = try container.decodeIfPresent(Bool.self, forKey: .removeFromDockOnClose) ?? defaults.removeFromDockOnClose
+        overlayPosition = try container.decodeIfPresent(OverlayPosition.self, forKey: .overlayPosition) ?? defaults.overlayPosition
+        audioQuality = try container.decodeIfPresent(AudioQuality.self, forKey: .audioQuality) ?? defaults.audioQuality
     }
 }

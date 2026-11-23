@@ -330,6 +330,21 @@ class ModelManager: ObservableObject {
         }
     }
 
+    /// Spoken language of the first 30 s of `samples` (one Whisper encoder pass + one decoder step).
+    /// - Returns: the Whisper language code (e.g. "ar", "en") and its probability among all languages.
+    func detectLanguage(samples: [Float]) async throws -> (language: String, confidence: Float) {
+        guard state.isReady, let whisperKit else {
+            throw ModelError.modelNotDownloaded
+        }
+        // WhisperKit 0.15 spells the audio-array variant `detectLangauge`.
+        let result = try await whisperKit.detectLangauge(audioArray: samples)
+        // langProbs holds the log-probability of the sampled language token (softmax over
+        // language tokens only). If WhisperKit replaced an unsupported code with its default,
+        // the code is missing here and the confidence is 0.
+        let logProbability = result.langProbs[result.language] ?? -.infinity
+        return (result.language, exp(logProbability))
+    }
+
     /// Streaming transcription - transcribes audio chunks and provides partial results
     func transcribeStreaming(
         audioStream: AsyncStream<[Float]>,

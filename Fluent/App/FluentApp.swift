@@ -93,6 +93,17 @@ enum PunctuationSelfTest {
             //   Fluent --transcribe-dir /path/to/wavs ar|auto
             runTranscriptionDirectory(arguments[index + 1], language: arguments[index + 2])
         }
+        if let index = arguments.firstIndex(of: "--audar-dir"), index + 4 < arguments.count {
+            // Same TSV check with the offline Audar engine (llama.cpp), model files given explicitly
+            //   Fluent --audar-dir /path/to/wavs ar|auto model.gguf mmproj.gguf
+            runAudarDirectory(arguments[index + 1], language: arguments[index + 2],
+                              modelPath: arguments[index + 3], mmprojPath: arguments[index + 4])
+        }
+        if let index = arguments.firstIndex(of: "--audar-routing-selftest"), index + 2 < arguments.count {
+            // Engine routing check through the real TranscriptionService path:
+            //   Fluent --audar-routing-selftest /path/to/audio.wav ar|auto|en
+            runAudarRouting(audioPath: arguments[index + 1], language: arguments[index + 2])
+        }
         if let index = arguments.firstIndex(of: "--transcribe-selftest"), index + 1 < arguments.count {
             runTranscription(audioPath: arguments[index + 1])
         }
@@ -138,6 +149,94 @@ enum PunctuationSelfTest {
             } catch {
                 FileHandle.standardError.write(Data("[selftest] error: \(error.localizedDescription)\n".utf8))
             }
+            exit(0)
+        }
+        dispatchMain()
+    }
+
+    private static func runAudarDirectory(_ path: String, language: String, modelPath: String, mmprojPath: String) -> Never {
+        Task.detached(priority: .userInitiated) {
+            do {
+                let loadStart = Date()
+                let engine = try AudarEngine(modelPath: modelPath, mmprojPath: mmprojPath)
+                let loadMs = Int(Date().timeIntervalSince(loadStart) * 1000)
+                FileHandle.standardError.write(Data("[selftest] audar load=\(loadMs)ms\n".utf8))
+                let files = try FileManager.default.contentsOfDirectory(atPath: path)
+                    .filter { $0.hasSuffix(".wav") }.sorted()
+                for file in files {
+                    let url = URL(fileURLWithPath: path).appendingPathComponent(file)
+                    let samples = try await AudioConverter.convertToWhisperSamples(url: url)
+                    let start = Date()
+                    let text = try engine.transcribe(samples: samples, language: language == "auto" ? nil : language)
+                    let ms = Int(Date().timeIntervalSince(start) * 1000)
+                    print("\(file)\t\(ms)\t\(text.replacingOccurrences(of: "\t", with: " ").replacingOccurrences(of: "\n", with: " "))")
+                    fflush(stdout)
+                }
+            } catch {
+                FileHandle.standardError.write(Data("[selftest] error: \(error.localizedDescription)\n".utf8))
+            }
+            exit(0)
+        }
+        dispatchMain()
+    }
+
+    /// Audar model files from the local Hugging Face cache, used instead of downloading 2.8 GB
+    /// again. DEBUG only: release builds always download from AudarAI's official repository.
+    private static var audarCacheDirectory: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".cache/huggingface/hub/models--audarai--Audar-ASR-V1-Turbo/snapshots")
+            .appendingPathComponent(AudarModelManager.revision)
+    }
+
+    /// Installs (if missing) and SHA-256-verifies the Audar files in the app's AudarModels folder,
+    /// loads Whisper + Audar, runs TranscriptionService.transcribe(audioURL:) with the given
+    /// language and prints the engine that was chosen and the text. Settings are restored on exit.
+    private static func runAudarRouting(audioPath: String, language: String) -> Never {
+        Task { @MainActor in
+            let log = { (line: String) in FileHandle.standardError.write(Data("[selftest] \(line)\n".utf8)) }
+            let settingsService = SettingsService.shared
+            let originalSettings = settingsService.settings
+            do {
+                settingsService.settings.language = language == "auto"
+                    ? .auto
+                    : (AppSettings.TranscriptionLanguage(rawValue: language) ?? .auto)
+                settingsService.settings.audarEnabled = true
+                if !settingsService.settings.audarLicenseAccepted {
+                    settingsService.settings.audarLicenseAcceptedAt = Date()
+                }
+
+                let audar = AudarModelManager.shared
+                log("audar dir: \(AudarModelManager.modelsDirectory.path)")
+                if !audar.isModelDownloaded {
+                    log("installing Audar files from \(audarCacheDirectory.path)")
+                    let start = Date()
+                    try await audar.installFromLocalDirectory(audarCacheDirectory)
+                    log("installed in \(Int(Date().timeIntervalSince(start) * 1000))ms")
+                }
+                let verifyStart = Date()
+                try await audar.verifyInstalledFiles()
+                log("sha256 verify: OK (\(Int(Date().timeIntervalSince(verifyStart) * 1000))ms)")
+
+                let whisper = ModelManager.shared
+                if !whisper.isModelDownloaded { try await whisper.downloadModel() }
+                let loadStart = Date()
+                try await whisper.loadModel()
+                try? await PunctuationModelManager.shared.loadModel()
+                try await audar.loadModel()
+                log("engines loaded in \(Int(Date().timeIntervalSince(loadStart) * 1000))ms, audar usable=\(audar.isUsable)")
+
+                let service = TranscriptionService()
+                let start = Date()
+                let text = try await service.transcribe(audioURL: URL(fileURLWithPath: audioPath))
+                let ms = Int(Date().timeIntervalSince(start) * 1000)
+                log("language=\(language) engine=\(service.lastEngine?.rawValue ?? "none") reason=\(service.lastRouteReason ?? "") time=\(ms)ms")
+                print("\(service.lastEngine?.rawValue ?? "none")\t\(text)")
+            } catch {
+                log("error: \(error.localizedDescription)")
+            }
+            settingsService.settings = originalSettings
+            AudarModelManager.shared.unloadModel() // llama.cpp asserts at exit if the engine is alive
+            fflush(stdout)
             exit(0)
         }
         dispatchMain()

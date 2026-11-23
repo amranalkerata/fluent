@@ -57,7 +57,29 @@
 		052 /* AudioDeviceManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 152 /* AudioDeviceManager.swift */; };
 		053 /* PunctCapSeg.mlpackage in Sources */ = {isa = PBXBuildFile; fileRef = 153 /* PunctCapSeg.mlpackage */; };
 		054 /* xlmr_punct_sp.model in Resources */ = {isa = PBXBuildFile; fileRef = 154 /* xlmr_punct_sp.model */; };
+		055 /* LlamaRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 155 /* LlamaRuntime.swift */; };
+		056 /* llama.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 156 /* llama.xcframework */; };
+		057 /* llama.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 156 /* llama.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		058 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 158 /* Metal.framework */; };
+		059 /* Accelerate.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 159 /* Accelerate.framework */; };
+		060 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 160 /* Foundation.framework */; };
+		061 /* AudarEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 161 /* AudarEngine.swift */; };
+		062 /* AudarModelManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 162 /* AudarModelManager.swift */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		802 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				057 /* llama.xcframework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		101 /* FluentApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FluentApp.swift; sourceTree = "<group>"; };
@@ -110,6 +132,13 @@
 		152 /* AudioDeviceManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioDeviceManager.swift; sourceTree = "<group>"; };
 		153 /* PunctCapSeg.mlpackage */ = {isa = PBXFileReference; lastKnownFileType = folder.mlpackage; path = PunctCapSeg.mlpackage; sourceTree = "<group>"; };
 		154 /* xlmr_punct_sp.model */ = {isa = PBXFileReference; lastKnownFileType = file; path = xlmr_punct_sp.model; sourceTree = "<group>"; };
+		155 /* LlamaRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LlamaRuntime.swift; sourceTree = "<group>"; };
+		156 /* llama.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = llama.xcframework; path = Vendor/llama.xcframework; sourceTree = SOURCE_ROOT; };
+		158 /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
+		159 /* Accelerate.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Accelerate.framework; path = System/Library/Frameworks/Accelerate.framework; sourceTree = SDKROOT; };
+		160 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = System/Library/Frameworks/Foundation.framework; sourceTree = SDKROOT; };
+		161 /* AudarEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudarEngine.swift; sourceTree = "<group>"; };
+		162 /* AudarModelManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudarModelManager.swift; sourceTree = "<group>"; };
 		900 /* Fluent.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Fluent.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -120,6 +149,10 @@
 			files = (
 				15B0A7EE2F2CF685006AA075 /* SentencepieceTokenizer in Frameworks */,
 				045 /* WhisperKit in Frameworks */,
+				056 /* llama.xcframework in Frameworks */,
+				058 /* Metal.framework in Frameworks */,
+				059 /* Accelerate.framework in Frameworks */,
+				060 /* Foundation.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -130,6 +163,7 @@
 			isa = PBXGroup;
 			children = (
 				200 /* Fluent */,
+				225 /* Frameworks */,
 				901 /* Products */,
 				15C981DD2F190AE800C28913 /* File.txt */,
 			);
@@ -265,6 +299,9 @@
 				146 /* TextFormattingService.swift */,
 				147 /* PunctuationModelManager.swift */,
 				150 /* ListFormattingService.swift */,
+				155 /* LlamaRuntime.swift */,
+				161 /* AudarEngine.swift */,
+				162 /* AudarModelManager.swift */,
 			);
 			path = Transcription;
 			sourceTree = "<group>";
@@ -343,6 +380,17 @@
 			path = Components;
 			sourceTree = "<group>";
 		};
+		225 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				156 /* llama.xcframework */,
+				158 /* Metal.framework */,
+				159 /* Accelerate.framework */,
+				160 /* Foundation.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		901 /* Products */ = {
 			isa = PBXGroup;
 			children = (
@@ -361,6 +409,7 @@
 				701 /* Sources */,
 				800 /* Frameworks */,
 				702 /* Resources */,
+				802 /* Embed Frameworks */,
 			);
 			buildRules = (
 			);
@@ -475,6 +524,9 @@
 				047 /* PunctuationModelManager.swift in Sources */,
 				050 /* ListFormattingService.swift in Sources */,
 				053 /* PunctCapSeg.mlpackage in Sources */,
+				055 /* LlamaRuntime.swift in Sources */,
+				061 /* AudarEngine.swift in Sources */,
+				062 /* AudarModelManager.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

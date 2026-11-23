@@ -103,6 +103,7 @@ struct OnboardingView: View {
             if SettingsService.shared.settings.formatTextEnabled {
                 try? await PunctuationModelManager.shared.loadModel()
             }
+            AudarModelManager.shared.loadIfConfigured()
         }
     }
 }
@@ -178,9 +179,10 @@ struct ModelDownloadStep: View {
     }
 
     var body: some View {
+        ScrollView {
         VStack(spacing: FluentSpacing.lg) {
             Image(systemName: "arrow.down.circle.fill")
-                .font(.system(size: 48))
+                .font(.system(size: 40))
                 .foregroundStyle(FluentColors.primary.gradient)
 
             VStack(spacing: FluentSpacing.sm) {
@@ -218,11 +220,15 @@ struct ModelDownloadStep: View {
 
                 // Action button
                 downloadActionButton
+
+                // Optional, recommended Arabic engine (Continue never waits for it)
+                AudarOnboardingCard()
             }
             .frame(maxWidth: 380)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity)
         .padding(FluentSpacing.cardPadding)
+        }
     }
 
     // MARK: - Card State
@@ -263,6 +269,119 @@ struct ModelDownloadStep: View {
                     try? await modelManager.downloadModel()
                 }
             }
+        }
+    }
+}
+
+// MARK: - Audar Card
+
+/// Optional Arabic engine on the download step: license checkbox + its own download.
+struct AudarOnboardingCard: View {
+    @ObservedObject var audarManager = AudarModelManager.shared
+    @ObservedObject var settingsService = SettingsService.shared
+
+    private var licenseAccepted: Bool { settingsService.settings.audarLicenseAccepted }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: FluentSpacing.sm) {
+            HStack(spacing: FluentSpacing.md) {
+                Image(systemName: statusIcon)
+                    .font(.title2)
+                    .foregroundStyle(statusColor)
+                    .frame(width: 30)
+
+                VStack(alignment: .leading, spacing: FluentSpacing.xxs) {
+                    HStack(spacing: FluentSpacing.xs) {
+                        FluentBadge("Recommended", variant: .info)
+                        FluentBadge("Optional", variant: .neutral)
+                    }
+                    Text("Audar Arabic model (best for Arabic dialects)")
+                        .font(.Fluent.titleSmall)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(statusText)
+                        .font(.Fluent.caption)
+                        .foregroundStyle(FluentColors.textSecondary)
+                        .lineLimit(2)
+                }
+
+                Spacer()
+
+                Text(audarManager.modelSizeDescription)
+                    .font(.Fluent.monoSmall)
+                    .foregroundStyle(FluentColors.textTertiary)
+            }
+
+            if case .downloading(let progress) = audarManager.state {
+                ProgressView(value: progress)
+                    .progressViewStyle(.linear)
+            }
+
+            if !audarManager.isModelDownloaded {
+                AudarLicenseView()
+            }
+
+            HStack {
+                Spacer()
+                actionButton
+            }
+        }
+        .padding(FluentSpacing.cardPadding)
+        .background(
+            RoundedRectangle(cornerRadius: FluentRadius.md)
+                .fill(FluentColors.surface)
+        )
+    }
+
+    private var statusIcon: String {
+        switch audarManager.state {
+        case .downloaded, .loading, .ready: return "checkmark.circle.fill"
+        case .error: return "exclamationmark.circle"
+        default: return "arrow.down.circle"
+        }
+    }
+
+    private var statusColor: Color {
+        switch audarManager.state {
+        case .downloaded, .loading, .ready: return FluentColors.success
+        case .downloading, .retrying: return FluentColors.primary
+        case .error: return FluentColors.error
+        case .notDownloaded: return FluentColors.textTertiary
+        }
+    }
+
+    private var statusText: String {
+        switch audarManager.state {
+        case .notDownloaded:
+            return licenseAccepted ? "Not downloaded" : "Accept the license to download"
+        case .downloading(let progress):
+            return "Downloading... \(Int(progress * 100))%"
+        case .retrying(let attempt, let max):
+            return "Retrying (\(attempt)/\(max))..."
+        case .downloaded, .loading, .ready:
+            return "Downloaded"
+        case .error(let message):
+            return message
+        }
+    }
+
+    @ViewBuilder
+    private var actionButton: some View {
+        if audarManager.isModelDownloaded {
+            HStack(spacing: FluentSpacing.xs) {
+                Image(systemName: "checkmark.circle.fill")
+                Text("Download Complete")
+            }
+            .font(.Fluent.caption)
+            .foregroundStyle(FluentColors.success)
+        } else if audarManager.state.isDownloading {
+            FluentButton("Cancel", icon: "xmark", variant: .secondary, size: .small) {
+                audarManager.cancelDownload()
+            }
+        } else {
+            FluentButton("Download Audar", icon: "arrow.down.circle", variant: .secondary, size: .small) {
+                Task { try? await audarManager.downloadModel() }
+            }
+            .disabled(!licenseAccepted)
         }
     }
 }

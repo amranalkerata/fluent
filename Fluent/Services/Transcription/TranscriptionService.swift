@@ -23,9 +23,25 @@ enum TranscriptionError: LocalizedError {
     }
 }
 
+/// Which speech-to-text engine handled a recording.
+enum SpeechEngine: String {
+    case whisper = "Whisper"
+    case audar = "Audar"
+}
+
 class TranscriptionService {
     private let settingsService = SettingsService.shared
     private let textFormattingService = TextFormattingService()
+
+    /// Engine and reason chosen by the last `transcribe(audioURL:)` call (diagnostics).
+    private(set) var lastEngine: SpeechEngine?
+    private(set) var lastRouteReason: String?
+
+    /// Whisper codes sent to Audar in auto mode: Arabic, plus the languages Whisper
+    /// tends to report for Arabic dialects.
+    private static let arabicLikeLanguages: Set<String> = ["ar", "fa", "ur", "ps"]
+    /// Below this language-detection probability, auto mode prefers Audar.
+    private static let minimumDetectionConfidence: Float = 0.6
 
     // Known Whisper hallucination phrases (lowercased, without brackets for comparison)
     // The isHallucination() method strips brackets/parentheses before comparing
@@ -266,9 +282,12 @@ class TranscriptionService {
     }
 
     func transcribe(audioURL: URL) async throws -> String {
-        // Check model is ready
+        // Check a model is ready: Whisper, or Audar for Arabic/auto
         let modelManager = await ModelManager.shared
-        guard await modelManager.state.isReady else {
+        let audarManager = await AudarModelManager.shared
+        let whisperReady = await modelManager.state.isReady
+        let audarUsable = await audarManager.isUsable
+        guard whisperReady || audarUsable else {
             throw TranscriptionError.modelNotReady
         }
 
@@ -295,10 +314,40 @@ class TranscriptionService {
         let language = settingsService.settings.language.rawValue
         let languageCode: String? = language.isEmpty ? nil : language
 
+        // Pick the engine
+        if !audarUsable {
+            // Downloaded and switched on but not loaded yet: load it for next time, use Whisper now.
+            await audarManager.loadIfConfigured()
+        }
+        let route = await chooseEngine(
+            samples: samples,
+            languageCode: languageCode,
+            whisperReady: whisperReady,
+            audarUsable: audarUsable
+        )
+        lastEngine = route.engine
+        lastRouteReason = route.reason
+
         // Transcribe
         let result: String
         do {
-            result = try await modelManager.transcribe(samples: samples, language: languageCode)
+            switch route.engine {
+            case .audar:
+                do {
+                    result = try await audarManager.transcribe(samples: samples, language: route.language)
+                } catch {
+                    // Any Audar failure falls back to Whisper with the user's language setting.
+                    guard whisperReady else { throw error }
+                    lastEngine = .whisper
+                    lastRouteReason = "Audar failed (\(error.localizedDescription)), fell back to Whisper"
+                    result = try await modelManager.transcribe(samples: samples, language: languageCode)
+                }
+            case .whisper:
+                guard whisperReady else { throw TranscriptionError.modelNotReady }
+                result = try await modelManager.transcribe(samples: samples, language: route.language)
+            }
+        } catch let error as TranscriptionError {
+            throw error
         } catch {
             throw TranscriptionError.transcriptionFailed(error.localizedDescription)
         }
@@ -317,6 +366,54 @@ class TranscriptionService {
         let cleanedResult = cleanTranscriptionArtifacts(formattedResult)
 
         return cleanedResult
+    }
+
+    // MARK: - Engine Routing
+
+    private struct EngineRoute {
+        let engine: SpeechEngine
+        /// Language code handed to the engine (nil = the engine detects it).
+        let language: String?
+        let reason: String
+    }
+
+    /// Arabic goes to Audar (far better on dialects), everything else to Whisper.
+    /// Without a usable Audar engine this is exactly the previous Whisper behaviour.
+    private func chooseEngine(
+        samples: [Float],
+        languageCode: String?,
+        whisperReady: Bool,
+        audarUsable: Bool
+    ) async -> EngineRoute {
+        guard audarUsable else {
+            return EngineRoute(engine: .whisper, language: languageCode, reason: "Audar not available")
+        }
+
+        switch languageCode {
+        case "ar":
+            return EngineRoute(engine: .audar, language: "ar", reason: "language set to Arabic")
+
+        case nil:
+            guard whisperReady else {
+                return EngineRoute(engine: .audar, language: nil, reason: "auto, Whisper not ready")
+            }
+            do {
+                let detection = try await ModelManager.shared.detectLanguage(samples: samples)
+                let summary = "auto, detected \(detection.language) (\(String(format: "%.2f", detection.confidence)))"
+                if Self.arabicLikeLanguages.contains(detection.language) {
+                    return EngineRoute(engine: .audar, language: "ar", reason: summary)
+                }
+                if detection.confidence < Self.minimumDetectionConfidence {
+                    return EngineRoute(engine: .audar, language: nil, reason: summary + ", low confidence")
+                }
+                return EngineRoute(engine: .whisper, language: detection.language, reason: summary)
+            } catch {
+                return EngineRoute(engine: .whisper, language: nil, reason: "auto, detection failed")
+            }
+
+        default:
+            return EngineRoute(engine: .whisper, language: languageCode, reason: "language set to \(languageCode ?? "")")
+        }
     }
 
     /// Check if the model is ready for transcription
