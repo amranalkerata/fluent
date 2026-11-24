@@ -45,6 +45,8 @@ class AppState: ObservableObject {
     private var isStoppingRecording = false // Prevent duplicate stop Tasks
     /// `LatencyLog.now()` of the shortcut press being handled, for the timing log.
     private var shortcutPressedAt: UInt64?
+    /// Transcribes the current recording while it is recorded (Audar routes only).
+    private var incrementalSession: IncrementalTranscriber?
 
     init() {
         _ = AudioDeviceManager.shared  // Start listening for audio device changes early
@@ -209,6 +211,7 @@ class AppState: ObservableObject {
                 let engineStart = LatencyLog.now()
                 try await audioService.startRecording()
                 LatencyLog.log("start.engine", since: engineStart)
+                startIncrementalTranscription()
                 LatencyLog.log("start.shortcut_to_engine", since: pressedAt)
                 // Show overlay as soon as audio is being captured
                 NotificationCenter.default.post(name: .showRecordingOverlay, object: self)
@@ -216,14 +219,30 @@ class AppState: ObservableObject {
                 SoundService.shared.playRecordingSound()       // Play sound first (while unmuted)
                 // Then mute for recording, once the start sound has played (off the main thread)
                 SystemAudioService.shared.muteForRecording(after: SoundService.shared.recordingSoundDuration)
-                // Note: Streaming transcription removed - file-based transcription is faster
-                // (streaming had O(n²) complexity, re-transcribing all audio every second)
             } catch {
                 transcriptionError = "Failed to start recording: \(error.localizedDescription)"
                 showLoadingOverlay()  // Show error so user knows what happened
                 workflowInProgress = false // Release lock on failure
             }
         }
+    }
+
+    /// Arabic/auto with Audar: transcribe finished speech segments while the user talks,
+    /// so only the last one is left at stop. Everything else keeps the full-file path.
+    private func startIncrementalTranscription() {
+        incrementalSession = nil
+        // Stopped already (the stop handler ran while this start was finishing): nothing to do.
+        guard audioService.isRecording, !isStoppingRecording,
+              let stream = audioService.audioStream,
+              let session = IncrementalTranscriber.makeIfApplicable(stream: stream) else { return }
+        incrementalSession = session
+        Task { await session.start() }
+    }
+
+    private func discardIncrementalSession() {
+        guard let session = incrementalSession else { return }
+        incrementalSession = nil
+        Task { await session.cancel() }
     }
 
     func stopRecording() {
@@ -243,6 +262,8 @@ class AppState: ObservableObject {
 
             recordingURL = await audioService.stopRecording()
             LatencyLog.log("stop.file_ready", since: pressedAt)
+            let session = incrementalSession
+            incrementalSession = nil
             SystemAudioService.shared.restoreAfterRecording()  // Unmute first
             SoundService.shared.playRecordingSound()           // Then play sound (now audible)
             // Don't hide overlay yet - let it show processing state
@@ -250,6 +271,7 @@ class AppState: ObservableObject {
             if let url = recordingURL {
                 // Validate minimum duration
                 if duration < AudioRecordingService.minimumRecordingDuration {
+                    await session?.cancel()
                     audioService.deleteRecording(at: url)
                     transcriptionError = RecordingError.recordingTooShort.localizedDescription
                     NotificationCenter.default.post(name: .hideRecordingOverlay, object: nil)
@@ -259,6 +281,7 @@ class AppState: ObservableObject {
 
                 // Check for speech activity before sending to Whisper (prevents hallucinations on silence)
                 if !audioService.hasSpeechActivity() {
+                    await session?.cancel()
                     audioService.deleteRecording(at: url)
                     transcriptionError = RecordingError.noSpeechDetected.localizedDescription
                     // Brief delay so user sees the error message on the overlay
@@ -268,8 +291,9 @@ class AppState: ObservableObject {
                     return
                 }
 
-                await transcribeRecording(url: url, duration: duration, stopPressedAt: pressedAt)
+                await transcribeRecording(url: url, duration: duration, stopPressedAt: pressedAt, incremental: session)
             } else {
+                await session?.cancel()
                 // No URL means recording was cancelled or failed - hide now
                 NotificationCenter.default.post(name: .hideRecordingOverlay, object: nil)
                 cleanupAfterRecording()
@@ -288,6 +312,7 @@ class AppState: ObservableObject {
     func cancelRecording() {
         guard isRecording else { return }
 
+        discardIncrementalSession()
         Task {
             _ = await audioService.stopRecording()
             SystemAudioService.shared.restoreAfterRecording()  // Unmute on cancel
@@ -312,8 +337,10 @@ class AppState: ObservableObject {
 
     // MARK: - Transcription
 
-    private func transcribeRecording(url: URL, duration: TimeInterval, stopPressedAt: UInt64) async {
+    private func transcribeRecording(url: URL, duration: TimeInterval, stopPressedAt: UInt64,
+                                     incremental: IncrementalTranscriber?) async {
         guard !isTranscribing else {
+            await incremental?.cancel()
             // Reset flags and hide overlay since we're not proceeding
             NotificationCenter.default.post(name: .hideRecordingOverlay, object: nil)
             cleanupAfterRecording()
@@ -334,9 +361,16 @@ class AppState: ObservableObject {
         }
 
         do {
-            // Use file-based transcription (fast, single-pass O(n) complexity)
+            // Segments already transcribed while recording, or the whole file (fast, single pass).
             let transcriptionService = TranscriptionService()
-            let result = try await transcriptionService.transcribe(audioURL: url)
+            let result: String
+            if let incremental {
+                result = try await transcriptionService.transcribe(
+                    incremental: incremental, audioURL: url, recordedDuration: duration
+                )
+            } else {
+                result = try await transcriptionService.transcribe(audioURL: url)
+            }
 
             // Check for empty transcription (silence/no speech detected by hallucination filter)
             if result.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

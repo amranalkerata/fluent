@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import AVFoundation
 
 @main
 struct FluentApp: App {
@@ -114,6 +115,12 @@ enum PunctuationSelfTest {
             // Stop-path stage timings through the real TranscriptionService path, one row per clip:
             //   Fluent --latency-selftest /path/to/clips ar|auto
             runLatencySelfTest(arguments[index + 1], language: arguments[index + 2])
+        }
+        if let index = arguments.firstIndex(of: "--incremental-selftest"), index + 2 < arguments.count {
+            // Transcription while recording, fed in 100 ms chunks like the microphone tap, then
+            // compared with the full-file path (one file, or every .wav/.m4a in a folder):
+            //   Fluent --incremental-selftest /path/to/audio.m4a ar|auto [--fast] [--min-segment 2.5]
+            runIncrementalSelfTest(arguments[index + 1], language: arguments[index + 2], arguments: arguments)
         }
         if let index = arguments.firstIndex(of: "--transcribe-selftest"), index + 1 < arguments.count {
             runTranscription(audioPath: arguments[index + 1])
@@ -309,6 +316,142 @@ enum PunctuationSelfTest {
                     print(["MEAN(\(rows.count))", String(format: "%.1f", rows.map(\.audioSeconds).reduce(0, +) / Double(rows.count)),
                            mean(\.conversionMs), detect, mean(\.asrMs), mean(\.routeAndAsrMs),
                            mean(\.formattingMs), mean(\.totalMs)].joined(separator: "\t"))
+                }
+            } catch {
+                log("error: \(error.localizedDescription)")
+            }
+            settingsService.settings = originalSettings
+            AudarModelManager.shared.unloadModel() // llama.cpp asserts at exit if the engine is alive
+            fflush(stdout)
+            exit(0)
+        }
+        dispatchMain()
+    }
+
+    /// Feeds each file's 16 kHz samples into an `IncrementalTranscriber` in 100 ms chunks at
+    /// real-time pace (`--fast`: as fast as possible, latency then meaningless), "stops", and
+    /// prints the stop-to-text latency, segment count and text; then runs the full-file path
+    /// on the same file for comparison. TSV on stdout:
+    ///   mode  file  ms  segments  segment_ms  reason  text
+    /// Files starting with "00_" are warm-up. Formatting forced on; settings restored on exit.
+    private static func runIncrementalSelfTest(_ path: String, language: String, arguments: [String]) -> Never {
+        Task { @MainActor in
+            let log = { (line: String) in FileHandle.standardError.write(Data("[incremental] \(line)\n".utf8)) }
+            let settingsService = SettingsService.shared
+            let originalSettings = settingsService.settings
+            let fast = arguments.contains("--fast")
+            var config = SpeechSegmenter.Config()
+            if let index = arguments.firstIndex(of: "--min-segment"), index + 1 < arguments.count,
+               let value = Double(arguments[index + 1]) {
+                config.minSegmentSeconds = value
+            }
+            if let index = arguments.firstIndex(of: "--pause"), index + 1 < arguments.count,
+               let value = Double(arguments[index + 1]) {
+                config.pauseSeconds = value
+            }
+            if let index = arguments.firstIndex(of: "--relax-after"), index + 1 < arguments.count,
+               let value = Double(arguments[index + 1]) {
+                config.relaxAfterSeconds = value
+            }
+            do {
+                settingsService.settings.language = language == "auto"
+                    ? .auto
+                    : (AppSettings.TranscriptionLanguage(rawValue: language) ?? .auto)
+                settingsService.settings.formatTextEnabled = true
+                settingsService.settings.audarEnabled = true
+                if !settingsService.settings.audarLicenseAccepted {
+                    settingsService.settings.audarLicenseAcceptedAt = Date()
+                }
+
+                let whisper = ModelManager.shared
+                let audar = AudarModelManager.shared
+                guard whisper.isModelDownloaded, audar.isModelDownloaded else {
+                    throw TranscriptionError.modelNotReady
+                }
+                try await whisper.loadModel()
+                try await PunctuationModelManager.shared.loadModel()
+                try await audar.loadModel()
+                log("engines loaded, audar usable=\(audar.isUsable) fast=\(fast) min_segment=\(config.minSegmentSeconds) pause=\(config.pauseSeconds) relax_after=\(config.relaxAfterSeconds)")
+
+                var isDirectory: ObjCBool = false
+                FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
+                let urls: [URL] = isDirectory.boolValue
+                    ? try FileManager.default.contentsOfDirectory(atPath: path)
+                        .filter { $0.hasSuffix(".wav") || $0.hasSuffix(".m4a") }.sorted()
+                        .map { URL(fileURLWithPath: path).appendingPathComponent($0) }
+                    : [URL(fileURLWithPath: path)]
+
+                let clean = { (text: String) in text.replacingOccurrences(of: "\t", with: " ").replacingOccurrences(of: "\n", with: " ") }
+                let ms = { (value: Double) in String(format: "%.0f", value) }
+                print(["mode", "file", "ms", "segments", "segment_ms", "reason", "text"].joined(separator: "\t"))
+                for url in urls {
+                    let file = url.lastPathComponent
+                    let samples = try await AudioConverter.convertToWhisperSamples(url: url)
+                    let seconds = Double(samples.count) / AudioConverter.targetSampleRate
+
+                    // Incremental: the file at its own rate and channel count, in 4096-frame
+                    // buffers (~90 ms) through the tap's StreamingResampler, at recording pace.
+                    var continuation: AsyncStream<[Float]>.Continuation!
+                    let stream = AsyncStream<[Float]> { continuation = $0 }
+                    guard let session = IncrementalTranscriber.makeIfApplicable(stream: stream, config: config) else {
+                        log("\(file): incremental path not applicable (Audar unusable or language not ar/auto)")
+                        continue
+                    }
+                    await session.start()
+                    let audioFile = try AVAudioFile(forReading: url)
+                    let format = audioFile.processingFormat
+                    let resampler = StreamingResampler()
+                    var streamed: [Float] = []
+                    var fedSeconds = 0.0
+                    let feedStart = LatencyLog.now()
+                    while audioFile.framePosition < audioFile.length {
+                        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4096) else { break }
+                        try audioFile.read(into: buffer, frameCount: 4096)
+                        guard buffer.frameLength > 0 else { break }
+                        if let out = resampler.process(buffer), !out.isEmpty {
+                            continuation.yield(out)
+                            streamed += out
+                        }
+                        fedSeconds += Double(buffer.frameLength) / format.sampleRate
+                        if fast {
+                            await Task.yield()
+                        } else {
+                            let due = feedStart + UInt64(fedSeconds * 1_000_000_000)
+                            let now = LatencyLog.now()
+                            if due > now { try await Task.sleep(nanoseconds: due - now) }
+                        }
+                    }
+                    let tail = resampler.flush()
+                    if !tail.isEmpty { continuation.yield(tail); streamed += tail }
+                    continuation.finish()
+                    let stopAt = LatencyLog.now()
+                    let service = TranscriptionService()
+                    let text = try await service.transcribe(incremental: session, audioURL: url, recordedDuration: seconds)
+                    let stopMs = LatencyLog.ms(since: stopAt)
+                    let t = service.lastTimings
+                    // Stream vs file converter (both AVAudioConverter): sample count and SNR.
+                    let common = min(streamed.count, samples.count)
+                    var signal: Double = 0, noise: Double = 0
+                    for i in 0..<common {
+                        signal += Double(samples[i] * samples[i])
+                        let d = Double(samples[i] - streamed[i]); noise += d * d
+                    }
+                    log("\(file): \(format.sampleRate) Hz x\(format.channelCount) -> stream \(streamed.count) vs file \(samples.count) samples, SNR \(String(format: "%.1f", 10 * log10(signal / max(noise, 1e-20)))) dB")
+                    print(["incremental", file, ms(stopMs), t.segments.map(String.init) ?? "-",
+                           t.segmentMs.map(ms).joined(separator: ","), service.lastRouteReason ?? "", clean(text)]
+                        .joined(separator: "\t"))
+                    fflush(stdout)
+                    log("\(file) \(String(format: "%.1f", seconds))s: stop→text \(ms(stopMs))ms (last segments \(ms(t.asrMs))ms, format \(ms(t.formattingMs))ms), segments \(t.segments ?? 0) [\(zip(t.segmentSeconds, t.segmentMs).map { String(format: "%.1fs:%.0f", $0, $1) }.joined(separator: " "))]")
+
+                    // Full-file path on the same audio, for comparison.
+                    let fullService = TranscriptionService()
+                    let fullStart = LatencyLog.now()
+                    let fullText = try await fullService.transcribe(audioURL: url)
+                    let fullMs = LatencyLog.ms(since: fullStart)
+                    print(["fullfile", file, ms(fullMs), "-", "-", fullService.lastRouteReason ?? "", clean(fullText)]
+                        .joined(separator: "\t"))
+                    fflush(stdout)
+                    log("\(file): full-file \(ms(fullMs))ms")
                 }
             } catch {
                 log("error: \(error.localizedDescription)")

@@ -44,7 +44,12 @@ class TranscriptionService {
         /// Whisper language detection (auto mode with Audar only).
         var detectionMs: Double?
         /// Run time of the engine call that produced the text (includes a failed Audar run before a fallback).
+        /// Incremental path: the Audar runs still pending at stop (last segment included).
         var asrMs: Double = 0
+        /// Incremental path only: number of segments, and Audar time of each (ms).
+        var segments: Int?
+        var segmentMs: [Double] = []
+        var segmentSeconds: [Double] = []
         /// Wall time from samples ready to raw text: detection + transcription, overlapped or not.
         var routeAndAsrMs: Double = 0
         var formattingMs: Double = 0
@@ -56,7 +61,13 @@ class TranscriptionService {
     /// tends to report for Arabic dialects.
     private static let arabicLikeLanguages: Set<String> = ["ar", "fa", "ur", "ps"]
     /// Below this language-detection probability, auto mode prefers Audar.
-    private static let minimumDetectionConfidence: Float = 0.6
+    static let minimumDetectionConfidence: Float = 0.6
+
+    /// Auto mode with Audar available: Whisper's detection goes to Audar when it reports
+    /// Arabic (or a language Whisper confuses with Arabic dialects) or is unsure.
+    static func routesToAudar(language: String, confidence: Float) -> Bool {
+        arabicLikeLanguages.contains(language) || confidence < minimumDetectionConfidence
+    }
 
     // Known Whisper hallucination phrases (lowercased, without brackets for comparison)
     // The isHallucination() method strips brackets/parentheses before comparing
@@ -411,11 +422,18 @@ class TranscriptionService {
         LatencyLog.log("stop.asr", ms: lastTimings.asrMs, engine: lastEngine?.rawValue ?? "none")
         LatencyLog.log("stop.route_and_asr", ms: lastTimings.routeAndAsrMs)
 
-        let trimmedResult = result.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = await postProcess(result)
+        lastTimings.totalMs = LatencyLog.log("stop.transcribe_total", since: startedAt)
+        return text
+    }
+
+    /// Raw engine text to the text that gets pasted: hallucination filter, punctuation and
+    /// list formatting, artifact cleanup. Returns "" for a hallucination.
+    private func postProcess(_ raw: String) async -> String {
+        let trimmedResult = raw.trimmingCharacters(in: .whitespacesAndNewlines)
 
         // Filter out known hallucinations
         if isHallucination(trimmedResult) {
-            lastTimings.totalMs = LatencyLog.log("stop.transcribe_total", since: startedAt)
             return ""
         }
 
@@ -426,9 +444,49 @@ class TranscriptionService {
         // Remove any remaining transcription artifacts
         let cleanedResult = cleanTranscriptionArtifacts(formattedResult)
         lastTimings.formattingMs = LatencyLog.log("stop.format", since: formattingStart)
-        lastTimings.totalMs = LatencyLog.log("stop.transcribe_total", since: startedAt)
-
         return cleanedResult
+    }
+
+    /// Finishes a recording that was transcribed while it was recorded (see
+    /// `IncrementalTranscriber`): transcribes the last segment, joins all segments and applies
+    /// the same post-processing as `transcribe(audioURL:)`. If the incremental path failed
+    /// for any reason, transcribes `audioURL` the usual way instead, so nothing is lost.
+    func transcribe(incremental session: IncrementalTranscriber, audioURL: URL, recordedDuration: TimeInterval) async throws -> String {
+        let startedAt = LatencyLog.now()
+        let currentLanguage = settingsService.settings.language.rawValue
+        let outcome: IncrementalTranscriber.Outcome
+        if currentLanguage != session.languageSetting {
+            await session.cancel()
+            outcome = .fallback("language setting changed")
+        } else {
+            outcome = await session.finish(recordedDuration: recordedDuration)
+        }
+
+        switch outcome {
+        case .fallback(let reason):
+            LatencyLog.logger.info("incremental fallback: \(reason, privacy: .public)")
+            let text = try await transcribe(audioURL: audioURL)
+            lastRouteReason = "incremental fallback (\(reason)); " + (lastRouteReason ?? "")
+            return text
+
+        case .transcript(let raw, let stats):
+            lastTimings = StageTimings()
+            lastEngine = .audar
+            lastRouteReason = stats.reason
+            lastTimings.audioSeconds = stats.audioSeconds
+            lastTimings.detectionMs = stats.detectionMs
+            lastTimings.asrMs = stats.finishMs
+            lastTimings.routeAndAsrMs = stats.finishMs
+            lastTimings.segments = stats.segments
+            lastTimings.segmentMs = stats.segmentMs
+            lastTimings.segmentSeconds = stats.segmentSeconds
+            LatencyLog.log("stop.incremental_wait", ms: stats.finishMs)
+            LatencyLog.log("stop.incremental_segments", count: stats.segments)
+
+            let text = await postProcess(raw)
+            lastTimings.totalMs = LatencyLog.log("stop.transcribe_total", since: startedAt)
+            return text
+        }
     }
 
     // MARK: - Engine Routing

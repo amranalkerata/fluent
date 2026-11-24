@@ -32,6 +32,10 @@ enum LatencyLog {
         logger.info("\(stage, privacy: .public) \(ms, format: .fixed(precision: 1), privacy: .public) ms")
     }
 
+    static func log(_ stage: String, count: Int) {
+        logger.info("\(stage, privacy: .public) \(count, privacy: .public)")
+    }
+
     static func log(_ stage: String, ms: Double, engine: String) {
         logger.info("\(stage, privacy: .public) \(ms, format: .fixed(precision: 1), privacy: .public) ms engine=\(engine, privacy: .public)")
     }
