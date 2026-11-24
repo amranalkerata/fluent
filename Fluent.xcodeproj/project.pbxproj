@@ -54,6 +54,7 @@
 		050 /* ListFormattingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 150 /* ListFormattingService.swift */; };
 		15B0A7EE2F2CF685006AA075 /* SentencepieceTokenizer in Frameworks */ = {isa = PBXBuildFile; productRef = 15B0A7ED2F2CF685006AA075 /* SentencepieceTokenizer */; };
 		051 /* SystemAudioService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 151 /* SystemAudioService.swift */; };
+		063 /* LatencyLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 163 /* LatencyLog.swift */; };
 		052 /* AudioDeviceManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 152 /* AudioDeviceManager.swift */; };
 		053 /* PunctCapSeg.mlpackage in Sources */ = {isa = PBXBuildFile; fileRef = 153 /* PunctCapSeg.mlpackage */; };
 		054 /* xlmr_punct_sp.model in Resources */ = {isa = PBXBuildFile; fileRef = 154 /* xlmr_punct_sp.model */; };
@@ -129,6 +130,7 @@
 		150 /* ListFormattingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListFormattingService.swift; sourceTree = "<group>"; };
 		15C981DD2F190AE800C28913 /* File.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = File.txt; sourceTree = "<group>"; };
 		151 /* SystemAudioService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemAudioService.swift; sourceTree = "<group>"; };
+		163 /* LatencyLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LatencyLog.swift; sourceTree = "<group>"; };
 		152 /* AudioDeviceManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioDeviceManager.swift; sourceTree = "<group>"; };
 		153 /* PunctCapSeg.mlpackage */ = {isa = PBXFileReference; lastKnownFileType = folder.mlpackage; path = PunctCapSeg.mlpackage; sourceTree = "<group>"; };
 		154 /* xlmr_punct_sp.model */ = {isa = PBXFileReference; lastKnownFileType = file; path = xlmr_punct_sp.model; sourceTree = "<group>"; };
@@ -330,6 +332,7 @@
 				114 /* PasteService.swift */,
 				115 /* PermissionService.swift */,
 				151 /* SystemAudioService.swift */,
+				163 /* LatencyLog.swift */,
 			);
 			path = System;
 			sourceTree = "<group>";
@@ -494,6 +497,7 @@
 				014 /* PasteService.swift in Sources */,
 				015 /* PermissionService.swift in Sources */,
 				051 /* SystemAudioService.swift in Sources */,
+				063 /* LatencyLog.swift in Sources */,
 				016 /* MainWindow.swift in Sources */,
 				017 /* SidebarView.swift in Sources */,
 				018 /* HomeView.swift in Sources */,

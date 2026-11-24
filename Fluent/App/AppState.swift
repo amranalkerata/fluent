@@ -43,6 +43,8 @@ class AppState: ObservableObject {
     private var recordingURL: URL?
     private var workflowInProgress = false // Lock for entire record→transcribe→paste cycle
     private var isStoppingRecording = false // Prevent duplicate stop Tasks
+    /// `LatencyLog.now()` of the shortcut press being handled, for the timing log.
+    private var shortcutPressedAt: UInt64?
 
     init() {
         _ = AudioDeviceManager.shared  // Start listening for audio device changes early
@@ -82,7 +84,9 @@ class AppState: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] notification in
                 guard let action = notification.object as? ShortcutAction else { return }
+                self?.shortcutPressedAt = notification.userInfo?[HotkeyService.pressedAtKey] as? UInt64
                 self?.handleShortcutAction(action)
+                self?.shortcutPressedAt = nil
             }
             .store(in: &cancellables)
     }
@@ -115,6 +119,13 @@ class AppState: ObservableObject {
             // Model is bundled with the app, just need to load it into memory
             if settingsService.settings.formatTextEnabled {
                 try? await PunctuationModelManager.shared.loadModel()
+            }
+
+            // Warm-up: the first prediction of each Core ML model is ~1 s slower than the
+            // rest. Pay that now, in the background, instead of on the first dictation.
+            _ = try? await PunctuationModelManager.shared.infer(text: "مرحبا كيف حالك اليوم")
+            if ModelManager.shared.state.isReady {
+                _ = try? await ModelManager.shared.detectLanguage(samples: [Float](repeating: 0, count: 16_000))
             }
 
             // Then the Audar Arabic engine, if downloaded, switched on and licensed.
@@ -154,6 +165,7 @@ class AppState: ObservableObject {
     }
 
     func startRecording() {
+        let pressedAt = shortcutPressedAt ?? LatencyLog.now()
         guard !isRecording else {
             return
         }
@@ -194,11 +206,16 @@ class AppState: ObservableObject {
 
         Task {
             do {
+                let engineStart = LatencyLog.now()
                 try await audioService.startRecording()
-                SoundService.shared.playRecordingSound()       // Play sound first (while unmuted)
-                SystemAudioService.shared.muteForRecording()   // Then mute for recording
-                // Show overlay
+                LatencyLog.log("start.engine", since: engineStart)
+                LatencyLog.log("start.shortcut_to_engine", since: pressedAt)
+                // Show overlay as soon as audio is being captured
                 NotificationCenter.default.post(name: .showRecordingOverlay, object: self)
+                LatencyLog.log("start.shortcut_to_overlay", since: pressedAt)
+                SoundService.shared.playRecordingSound()       // Play sound first (while unmuted)
+                // Then mute for recording, once the start sound has played (off the main thread)
+                SystemAudioService.shared.muteForRecording(after: SoundService.shared.recordingSoundDuration)
                 // Note: Streaming transcription removed - file-based transcription is faster
                 // (streaming had O(n²) complexity, re-transcribing all audio every second)
             } catch {
@@ -218,12 +235,14 @@ class AppState: ObservableObject {
         }
 
         isStoppingRecording = true
+        let pressedAt = shortcutPressedAt ?? LatencyLog.now()
 
         Task {
             // Capture duration before stopping (it gets reset)
             let duration = recordingDuration
 
             recordingURL = await audioService.stopRecording()
+            LatencyLog.log("stop.file_ready", since: pressedAt)
             SystemAudioService.shared.restoreAfterRecording()  // Unmute first
             SoundService.shared.playRecordingSound()           // Then play sound (now audible)
             // Don't hide overlay yet - let it show processing state
@@ -249,7 +268,7 @@ class AppState: ObservableObject {
                     return
                 }
 
-                await transcribeRecording(url: url, duration: duration)
+                await transcribeRecording(url: url, duration: duration, stopPressedAt: pressedAt)
             } else {
                 // No URL means recording was cancelled or failed - hide now
                 NotificationCenter.default.post(name: .hideRecordingOverlay, object: nil)
@@ -293,7 +312,7 @@ class AppState: ObservableObject {
 
     // MARK: - Transcription
 
-    private func transcribeRecording(url: URL, duration: TimeInterval) async {
+    private func transcribeRecording(url: URL, duration: TimeInterval, stopPressedAt: UInt64) async {
         guard !isTranscribing else {
             // Reset flags and hide overlay since we're not proceeding
             NotificationCenter.default.post(name: .hideRecordingOverlay, object: nil)
@@ -351,12 +370,17 @@ class AppState: ObservableObject {
                 // Small delay to let focus settle back to target app
                 try? await Task.sleep(nanoseconds: 100_000_000)  // 100ms
 
+                // Cmd+V is sent synchronously at the start of pasteText
+                LatencyLog.log("stop.to_paste", since: stopPressedAt)
+                let pasteStart = LatencyLog.now()
+
                 // Use continuation to await the paste result
                 let pasteResult = await withCheckedContinuation { continuation in
                     PasteService.shared.pasteText(result) { result in
                         continuation.resume(returning: result)
                     }
                 }
+                LatencyLog.log("stop.paste", since: pasteStart)
 
                 pasteSucceeded = pasteResult.succeeded
 

@@ -37,6 +37,21 @@ class TranscriptionService {
     private(set) var lastEngine: SpeechEngine?
     private(set) var lastRouteReason: String?
 
+    /// Stage durations of the last `transcribe(audioURL:)` call, in milliseconds (diagnostics).
+    struct StageTimings {
+        var audioSeconds: Double = 0
+        var conversionMs: Double = 0
+        /// Whisper language detection (auto mode with Audar only).
+        var detectionMs: Double?
+        /// Run time of the engine call that produced the text (includes a failed Audar run before a fallback).
+        var asrMs: Double = 0
+        /// Wall time from samples ready to raw text: detection + transcription, overlapped or not.
+        var routeAndAsrMs: Double = 0
+        var formattingMs: Double = 0
+        var totalMs: Double = 0
+    }
+    private(set) var lastTimings = StageTimings()
+
     /// Whisper codes sent to Audar in auto mode: Arabic, plus the languages Whisper
     /// tends to report for Arabic dialects.
     private static let arabicLikeLanguages: Set<String> = ["ar", "fa", "ur", "ps"]
@@ -282,6 +297,8 @@ class TranscriptionService {
     }
 
     func transcribe(audioURL: URL) async throws -> String {
+        let startedAt = LatencyLog.now()
+        lastTimings = StageTimings()
         // Check a model is ready: Whisper, or Audar for Arabic/auto
         let modelManager = await ModelManager.shared
         let audarManager = await AudarModelManager.shared
@@ -298,14 +315,17 @@ class TranscriptionService {
 
         // Convert audio to whisper format (16kHz mono PCM)
         let samples: [Float]
+        let conversionStart = LatencyLog.now()
         do {
             samples = try await AudioConverter.convertToWhisperSamples(url: audioURL)
         } catch {
             throw TranscriptionError.audioConversionFailed(error.localizedDescription)
         }
+        lastTimings.conversionMs = LatencyLog.log("stop.convert", since: conversionStart)
 
         // Check we have enough audio data
         let durationSeconds = Double(samples.count) / AudioConverter.targetSampleRate
+        lastTimings.audioSeconds = durationSeconds
         guard durationSeconds >= 0.5 else {
             throw TranscriptionError.emptyTranscription
         }
@@ -319,6 +339,27 @@ class TranscriptionService {
             // Downloaded and switched on but not loaded yet: load it for next time, use Whisper now.
             await audarManager.loadIfConfigured()
         }
+        let routeStart = LatencyLog.now()
+
+        // Auto mode with both engines: Audar (Metal, GPU) starts transcribing as Arabic while
+        // Whisper (Core ML, ANE/CPU) detects the language, instead of one after the other. The
+        // Audar text is used only if detection routes to Audar; otherwise it is discarded (an
+        // Audar run cannot be stopped midway, it just finishes in the background).
+        let speculativeAudar: Task<(outcome: Result<String, Error>, ms: Double), Never>?
+        if languageCode == nil && whisperReady && audarUsable {
+            speculativeAudar = Task {
+                let start = LatencyLog.now()
+                do {
+                    let text = try await audarManager.transcribe(samples: samples, language: "ar")
+                    return (.success(text), LatencyLog.ms(since: start))
+                } catch {
+                    return (.failure(error), LatencyLog.ms(since: start))
+                }
+            }
+        } else {
+            speculativeAudar = nil
+        }
+
         let route = await chooseEngine(
             samples: samples,
             languageCode: languageCode,
@@ -327,19 +368,31 @@ class TranscriptionService {
         )
         lastEngine = route.engine
         lastRouteReason = route.reason
+        if speculativeAudar != nil && route.engine == .whisper {
+            lastRouteReason = route.reason + ", parallel Audar result discarded"
+        }
 
         // Transcribe
         let result: String
+        let asrStart = LatencyLog.now()
+        var asrMs: Double?
         do {
             switch route.engine {
             case .audar:
                 do {
-                    result = try await audarManager.transcribe(samples: samples, language: route.language)
+                    if let speculativeAudar {
+                        let run = await speculativeAudar.value
+                        asrMs = run.ms
+                        result = try run.outcome.get()
+                    } else {
+                        result = try await audarManager.transcribe(samples: samples, language: route.language)
+                    }
                 } catch {
                     // Any Audar failure falls back to Whisper with the user's language setting.
                     guard whisperReady else { throw error }
                     lastEngine = .whisper
                     lastRouteReason = "Audar failed (\(error.localizedDescription)), fell back to Whisper"
+                    asrMs = nil // time the whole failed run + fallback
                     result = try await modelManager.transcribe(samples: samples, language: languageCode)
                 }
             case .whisper:
@@ -352,18 +405,28 @@ class TranscriptionService {
             throw TranscriptionError.transcriptionFailed(error.localizedDescription)
         }
 
+        // A parallel Audar run reports its own run time; everything else is timed from here.
+        lastTimings.asrMs = asrMs ?? LatencyLog.ms(since: asrStart)
+        lastTimings.routeAndAsrMs = LatencyLog.ms(since: routeStart)
+        LatencyLog.log("stop.asr", ms: lastTimings.asrMs, engine: lastEngine?.rawValue ?? "none")
+        LatencyLog.log("stop.route_and_asr", ms: lastTimings.routeAndAsrMs)
+
         let trimmedResult = result.trimmingCharacters(in: .whitespacesAndNewlines)
 
         // Filter out known hallucinations
         if isHallucination(trimmedResult) {
+            lastTimings.totalMs = LatencyLog.log("stop.transcribe_total", since: startedAt)
             return ""
         }
 
         // Apply text formatting (punctuation + capitalization) if enabled
+        let formattingStart = LatencyLog.now()
         let formattedResult = await textFormattingService.format(text: trimmedResult)
 
         // Remove any remaining transcription artifacts
         let cleanedResult = cleanTranscriptionArtifacts(formattedResult)
+        lastTimings.formattingMs = LatencyLog.log("stop.format", since: formattingStart)
+        lastTimings.totalMs = LatencyLog.log("stop.transcribe_total", since: startedAt)
 
         return cleanedResult
     }
@@ -398,13 +461,16 @@ class TranscriptionService {
                 return EngineRoute(engine: .audar, language: nil, reason: "auto, Whisper not ready")
             }
             do {
+                let detectionStart = LatencyLog.now()
                 let detection = try await ModelManager.shared.detectLanguage(samples: samples)
+                lastTimings.detectionMs = LatencyLog.log("stop.detect", since: detectionStart)
                 let summary = "auto, detected \(detection.language) (\(String(format: "%.2f", detection.confidence)))"
                 if Self.arabicLikeLanguages.contains(detection.language) {
                     return EngineRoute(engine: .audar, language: "ar", reason: summary)
                 }
                 if detection.confidence < Self.minimumDetectionConfidence {
-                    return EngineRoute(engine: .audar, language: nil, reason: summary + ", low confidence")
+                    // Takes the parallel Audar run, which is prefilled as Arabic.
+                    return EngineRoute(engine: .audar, language: "ar", reason: summary + ", low confidence")
                 }
                 return EngineRoute(engine: .whisper, language: detection.language, reason: summary)
             } catch {

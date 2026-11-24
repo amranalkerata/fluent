@@ -88,6 +88,12 @@ enum PunctuationSelfTest {
             fflush(stdout)
             exit(0)
         }
+        if arguments.contains("--mute-selftest") {
+            // Cost of the Core Audio calls behind the recording mute, without changing the mute state
+            print(SystemAudioService.shared.benchmarkCoreAudioCalls())
+            fflush(stdout)
+            exit(0)
+        }
         if let index = arguments.firstIndex(of: "--transcribe-dir"), index + 2 < arguments.count {
             // Batch accuracy check: raw Whisper output for every .wav in a folder, as TSV
             //   Fluent --transcribe-dir /path/to/wavs ar|auto
@@ -103,6 +109,11 @@ enum PunctuationSelfTest {
             // Engine routing check through the real TranscriptionService path:
             //   Fluent --audar-routing-selftest /path/to/audio.wav ar|auto|en
             runAudarRouting(audioPath: arguments[index + 1], language: arguments[index + 2])
+        }
+        if let index = arguments.firstIndex(of: "--latency-selftest"), index + 2 < arguments.count {
+            // Stop-path stage timings through the real TranscriptionService path, one row per clip:
+            //   Fluent --latency-selftest /path/to/clips ar|auto
+            runLatencySelfTest(arguments[index + 1], language: arguments[index + 2])
         }
         if let index = arguments.firstIndex(of: "--transcribe-selftest"), index + 1 < arguments.count {
             runTranscription(audioPath: arguments[index + 1])
@@ -231,6 +242,74 @@ enum PunctuationSelfTest {
                 let ms = Int(Date().timeIntervalSince(start) * 1000)
                 log("language=\(language) engine=\(service.lastEngine?.rawValue ?? "none") reason=\(service.lastRouteReason ?? "") time=\(ms)ms")
                 print("\(service.lastEngine?.rawValue ?? "none")\t\(text)")
+            } catch {
+                log("error: \(error.localizedDescription)")
+            }
+            settingsService.settings = originalSettings
+            AudarModelManager.shared.unloadModel() // llama.cpp asserts at exit if the engine is alive
+            fflush(stdout)
+            exit(0)
+        }
+        dispatchMain()
+    }
+
+    /// Loads Whisper, punctuation and Audar (already installed in AudarModels), then runs
+    /// TranscriptionService.transcribe(audioURL:) on every .wav/.m4a in `path` (sorted; files
+    /// starting with "00_" are warm-up and left out of the averages) and prints a TSV of stage
+    /// timings in ms. Formatting is forced on; settings are restored on exit.
+    private static func runLatencySelfTest(_ path: String, language: String) -> Never {
+        Task { @MainActor in
+            let log = { (line: String) in FileHandle.standardError.write(Data("[latency] \(line)\n".utf8)) }
+            let settingsService = SettingsService.shared
+            let originalSettings = settingsService.settings
+            do {
+                settingsService.settings.language = language == "auto"
+                    ? .auto
+                    : (AppSettings.TranscriptionLanguage(rawValue: language) ?? .auto)
+                settingsService.settings.formatTextEnabled = true
+                settingsService.settings.audarEnabled = true
+                if !settingsService.settings.audarLicenseAccepted {
+                    settingsService.settings.audarLicenseAcceptedAt = Date()
+                }
+
+                let whisper = ModelManager.shared
+                let audar = AudarModelManager.shared
+                guard whisper.isModelDownloaded, audar.isModelDownloaded else {
+                    throw TranscriptionError.modelNotReady
+                }
+                let loadStart = Date()
+                try await whisper.loadModel()
+                try await PunctuationModelManager.shared.loadModel()
+                try await audar.loadModel()
+                log("engines loaded in \(Int(Date().timeIntervalSince(loadStart) * 1000))ms, audar usable=\(audar.isUsable)")
+
+                let files = try FileManager.default.contentsOfDirectory(atPath: path)
+                    .filter { $0.hasSuffix(".wav") || $0.hasSuffix(".m4a") }.sorted()
+                print("file\taudio_s\tconvert\tdetect\tasr\troute_asr\tformat\ttotal\tengine\treason\ttext")
+                var rows: [TranscriptionService.StageTimings] = []
+                for file in files {
+                    let service = TranscriptionService()
+                    let text = try await service.transcribe(audioURL: URL(fileURLWithPath: path).appendingPathComponent(file))
+                    let t = service.lastTimings
+                    let f = { (value: Double?) in value.map { String(format: "%.0f", $0) } ?? "-" }
+                    print([file, String(format: "%.1f", t.audioSeconds), f(t.conversionMs), f(t.detectionMs),
+                           f(t.asrMs), f(t.routeAndAsrMs), f(t.formattingMs), f(t.totalMs),
+                           service.lastEngine?.rawValue ?? "none", service.lastRouteReason ?? "",
+                           text.replacingOccurrences(of: "\t", with: " ").replacingOccurrences(of: "\n", with: " ")]
+                        .joined(separator: "\t"))
+                    fflush(stdout)
+                    if !file.hasPrefix("00_") { rows.append(t) }
+                }
+                if !rows.isEmpty {
+                    let mean = { (key: (TranscriptionService.StageTimings) -> Double) in
+                        String(format: "%.0f", rows.map(key).reduce(0, +) / Double(rows.count))
+                    }
+                    let detections = rows.compactMap(\.detectionMs)
+                    let detect = detections.isEmpty ? "-" : String(format: "%.0f", detections.reduce(0, +) / Double(detections.count))
+                    print(["MEAN(\(rows.count))", String(format: "%.1f", rows.map(\.audioSeconds).reduce(0, +) / Double(rows.count)),
+                           mean(\.conversionMs), detect, mean(\.asrMs), mean(\.routeAndAsrMs),
+                           mean(\.formattingMs), mean(\.totalMs)].joined(separator: "\t"))
+                }
             } catch {
                 log("error: \(error.localizedDescription)")
             }

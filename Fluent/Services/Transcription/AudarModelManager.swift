@@ -394,6 +394,13 @@ final class AudarModelManager: ObservableObject {
                 }
                 engine = loaded
                 state = .ready
+                // Warm-up pass so the user's first dictation doesn't pay for Metal
+                // pipeline setup and first-run allocations (~1 s). A soft 220 Hz tone
+                // stays above the engine's silence gate; the output is discarded.
+                Task.detached(priority: .utility) {
+                    let tone = (0..<16_000).map { Float(0.02 * sin(2 * Double.pi * 220 * Double($0) / 16_000)) }
+                    _ = try? loaded.transcribe(samples: tone, language: "ar")
+                }
             } catch {
                 state = .error("Failed to load model: \(error.localizedDescription)")
                 throw ModelError.loadFailed(error.localizedDescription)
