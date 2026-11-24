@@ -204,11 +204,14 @@ class TranscriptionService {
         //    Pattern-based detection beats blocklists because Whisper generates endless variations.
         //    Exception: a single bracketed word that is not a sound tag is speech (Audar writes
         //    English words said in Arabic speech in brackets: "[CRM]").
+        //    Only one bracket group counts: "[CRM] جاهز قبل ال [deadline]" starts and ends with
+        //    brackets but is speech; `cleanTranscriptionArtifacts` drops any tags in it later.
         if (trimmed.hasPrefix("[") && trimmed.hasSuffix("]")) ||
            (trimmed.hasPrefix("(") && trimmed.hasSuffix(")")) {
             let inner = String(trimmed.dropFirst().dropLast())
-            let isSingleWord = !inner.contains(where: { $0.isWhitespace || "[]()".contains($0) })
-            if !isSingleWord || SpeechCleanup.isNonSpeechTag(inner, phrases: Self.hallucinationPhrases) {
+            let isSingleGroup = !inner.contains(where: { "[]()".contains($0) })
+            let isSingleWord = isSingleGroup && !inner.contains(where: \.isWhitespace)
+            if isSingleGroup && (!isSingleWord || SpeechCleanup.isNonSpeechTag(inner, phrases: Self.hallucinationPhrases)) {
                 return true
             }
         }
@@ -411,8 +414,9 @@ class TranscriptionService {
     /// Raw engine text to the text that gets pasted: hallucination filter, bracket cleanup
     /// (sound tags removed, bracketed speech kept), speech cleanup (stutters, repeats, filler
     /// sounds), punctuation and list formatting. Returns "" for a hallucination.
-    /// Internal (not private) so the DEBUG self-test runs exactly this path.
-    func postProcess(_ raw: String) async -> String {
+    /// Internal (not private) so the DEBUG self-test runs exactly this path. Live typing runs
+    /// it on each segment with `timed: false`, so the stop-path timings stay those of the stop.
+    func postProcess(_ raw: String, timed: Bool = true) async -> String {
         let trimmedResult = raw.trimmingCharacters(in: .whitespacesAndNewlines)
 
         // Filter out known hallucinations
@@ -435,7 +439,9 @@ class TranscriptionService {
 
         // Apply text formatting (punctuation + capitalization) if enabled
         let formattedResult = await textFormattingService.format(text: text)
-        lastTimings.formattingMs = LatencyLog.log("stop.format", since: formattingStart)
+        if timed {
+            lastTimings.formattingMs = LatencyLog.log("stop.format", since: formattingStart)
+        }
         return formattedResult
     }
 
@@ -445,6 +451,21 @@ class TranscriptionService {
     /// for any reason, transcribes `audioURL` the usual way instead, so nothing is lost.
     func transcribe(incremental session: IncrementalTranscriber, audioURL: URL, recordedDuration: TimeInterval) async throws -> String {
         let startedAt = LatencyLog.now()
+        switch await finish(incremental: session, recordedDuration: recordedDuration) {
+        case .fallback(let reason):
+            return try await transcribe(audioURL: audioURL, afterIncrementalFallback: reason)
+
+        case .transcript(let raw, _):
+            let text = await postProcess(raw)
+            lastTimings.totalMs = LatencyLog.log("stop.transcribe_total", since: startedAt)
+            return text
+        }
+    }
+
+    /// The first half of `transcribe(incremental:…)`: finishes the session and records its
+    /// route and timings, without post-processing (live typing post-processes each segment
+    /// itself). On `.fallback`, follow with `transcribe(audioURL:afterIncrementalFallback:)`.
+    func finish(incremental session: IncrementalTranscriber, recordedDuration: TimeInterval) async -> IncrementalTranscriber.Outcome {
         let currentLanguage = settingsService.settings.language.rawValue
         let outcome: IncrementalTranscriber.Outcome
         if currentLanguage != session.languageSetting {
@@ -457,11 +478,8 @@ class TranscriptionService {
         switch outcome {
         case .fallback(let reason):
             LatencyLog.logger.info("incremental fallback: \(reason, privacy: .public)")
-            let text = try await transcribe(audioURL: audioURL)
-            lastRouteReason = "incremental fallback (\(reason)); " + (lastRouteReason ?? "")
-            return text
 
-        case .transcript(let raw, let stats):
+        case .transcript(_, let stats):
             lastTimings = StageTimings()
             lastEngine = .audar
             lastRouteReason = stats.reason
@@ -474,11 +492,15 @@ class TranscriptionService {
             lastTimings.segmentSeconds = stats.segmentSeconds
             LatencyLog.log("stop.incremental_wait", ms: stats.finishMs)
             LatencyLog.log("stop.incremental_segments", count: stats.segments)
-
-            let text = await postProcess(raw)
-            lastTimings.totalMs = LatencyLog.log("stop.transcribe_total", since: startedAt)
-            return text
         }
+        return outcome
+    }
+
+    /// The full-file path after an incremental session answered `.fallback(reason)`.
+    func transcribe(audioURL: URL, afterIncrementalFallback reason: String) async throws -> String {
+        let text = try await transcribe(audioURL: audioURL)
+        lastRouteReason = "incremental fallback (\(reason)); " + (lastRouteReason ?? "")
+        return text
     }
 
     // MARK: - Engine Routing

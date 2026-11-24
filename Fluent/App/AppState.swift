@@ -47,6 +47,8 @@ class AppState: ObservableObject {
     private var shortcutPressedAt: UInt64?
     /// Transcribes the current recording while it is recorded (Audar routes only).
     private var incrementalSession: IncrementalTranscriber?
+    /// Types `incrementalSession`'s segments into the frontmost app while recording.
+    private var liveTyping: LiveTypingRun?
 
     init() {
         _ = AudioDeviceManager.shared  // Start listening for audio device changes early
@@ -231,15 +233,28 @@ class AppState: ObservableObject {
     /// so only the last one is left at stop. Everything else keeps the full-file path.
     private func startIncrementalTranscription() {
         incrementalSession = nil
+        liveTyping?.cancel()
+        liveTyping = nil
         // Stopped already (the stop handler ran while this start was finishing): nothing to do.
         guard audioService.isRecording, !isStoppingRecording,
               let stream = audioService.audioStream,
               let session = IncrementalTranscriber.makeIfApplicable(stream: stream) else { return }
         incrementalSession = session
         Task { await session.start() }
+
+        // Type each segment into the app the user is dictating into, unless that is Fluent
+        // itself (or posting keyboard events is not allowed): then the text is pasted at stop.
+        if settingsService.settings.liveTypingEnabled,
+           AXIsProcessTrusted(),
+           let target = NSWorkspace.shared.frontmostApplication,
+           target.bundleIdentifier != Bundle.main.bundleIdentifier {
+            liveTyping = LiveTypingRun(session: session, target: target)
+        }
     }
 
     private func discardIncrementalSession() {
+        liveTyping?.cancel()
+        liveTyping = nil
         guard let session = incrementalSession else { return }
         incrementalSession = nil
         Task { await session.cancel() }
@@ -264,6 +279,8 @@ class AppState: ObservableObject {
             LatencyLog.log("stop.file_ready", since: pressedAt)
             let session = incrementalSession
             incrementalSession = nil
+            let live = liveTyping
+            liveTyping = nil
             SystemAudioService.shared.restoreAfterRecording()  // Unmute first
             SoundService.shared.playRecordingSound()           // Then play sound (now audible)
             // Don't hide overlay yet - let it show processing state
@@ -272,6 +289,7 @@ class AppState: ObservableObject {
                 // Validate minimum duration
                 if duration < AudioRecordingService.minimumRecordingDuration {
                     await session?.cancel()
+                    live?.cancel()
                     audioService.deleteRecording(at: url)
                     transcriptionError = RecordingError.recordingTooShort.localizedDescription
                     NotificationCenter.default.post(name: .hideRecordingOverlay, object: nil)
@@ -282,6 +300,7 @@ class AppState: ObservableObject {
                 // Check for speech activity before sending to Whisper (prevents hallucinations on silence)
                 if !audioService.hasSpeechActivity() {
                     await session?.cancel()
+                    live?.cancel()
                     audioService.deleteRecording(at: url)
                     transcriptionError = RecordingError.noSpeechDetected.localizedDescription
                     // Brief delay so user sees the error message on the overlay
@@ -291,9 +310,11 @@ class AppState: ObservableObject {
                     return
                 }
 
-                await transcribeRecording(url: url, duration: duration, stopPressedAt: pressedAt, incremental: session)
+                await transcribeRecording(url: url, duration: duration, stopPressedAt: pressedAt,
+                                          incremental: session, live: live)
             } else {
                 await session?.cancel()
+                live?.cancel()
                 // No URL means recording was cancelled or failed - hide now
                 NotificationCenter.default.post(name: .hideRecordingOverlay, object: nil)
                 cleanupAfterRecording()
@@ -337,10 +358,22 @@ class AppState: ObservableObject {
 
     // MARK: - Transcription
 
+    /// How the text of a finished recording reaches the user.
+    private enum Delivery {
+        /// Paste the whole text at stop (no live typing).
+        case paste(String)
+        /// Typed while recording; paste only what could not be typed.
+        case live(LiveTypingRun)
+        /// Live typing was interrupted (the session fell back to the full-file path after some
+        /// text was typed): the full-file text goes to the clipboard, not into the field.
+        case clipboard(String, LiveTypingRun)
+    }
+
     private func transcribeRecording(url: URL, duration: TimeInterval, stopPressedAt: UInt64,
-                                     incremental: IncrementalTranscriber?) async {
+                                     incremental: IncrementalTranscriber?, live: LiveTypingRun?) async {
         guard !isTranscribing else {
             await incremental?.cancel()
+            live?.cancel()
             // Reset flags and hide overlay since we're not proceeding
             NotificationCenter.default.post(name: .hideRecordingOverlay, object: nil)
             cleanupAfterRecording()
@@ -363,13 +396,23 @@ class AppState: ObservableObject {
         do {
             // Segments already transcribed while recording, or the whole file (fast, single pass).
             let transcriptionService = TranscriptionService()
-            let result: String
-            if let incremental {
-                result = try await transcriptionService.transcribe(
+            let delivery: Delivery
+            if let incremental, let live {
+                delivery = try await finishLiveTyping(live, session: incremental, service: transcriptionService,
+                                                      audioURL: url, duration: duration, stopPressedAt: stopPressedAt)
+            } else if let incremental {
+                delivery = .paste(try await transcriptionService.transcribe(
                     incremental: incremental, audioURL: url, recordedDuration: duration
-                )
+                ))
             } else {
-                result = try await transcriptionService.transcribe(audioURL: url)
+                delivery = .paste(try await transcriptionService.transcribe(audioURL: url))
+            }
+
+            let result: String
+            switch delivery {
+            case .paste(let text): result = text
+            case .live(let run): result = run.fullText
+            case .clipboard(let text, _): result = text
             }
 
             // Check for empty transcription (silence/no speech detected by hallucination filter)
@@ -391,8 +434,8 @@ class AppState: ObservableObject {
             var targetApp: String? = nil
             var pasteSucceeded = false
 
-            // Auto-paste (only if we have text and weren't cancelled)
-            if !result.isEmpty {
+            switch delivery {
+            case .paste:
                 // CRITICAL: Capture target app BEFORE hiding overlay
                 // The overlay might steal focus, so we need to know where to return
                 targetApp = NSWorkspace.shared.frontmostApplication?.localizedName
@@ -406,22 +449,27 @@ class AppState: ObservableObject {
 
                 // Cmd+V is sent synchronously at the start of pasteText
                 LatencyLog.log("stop.to_paste", since: stopPressedAt)
-                let pasteStart = LatencyLog.now()
+                pasteSucceeded = await paste(result)
 
-                // Use continuation to await the paste result
-                let pasteResult = await withCheckedContinuation { continuation in
-                    PasteService.shared.pasteText(result) { result in
-                        continuation.resume(returning: result)
-                    }
+            case .live(let run):
+                targetApp = run.targetName
+                NotificationCenter.default.post(name: .hideRecordingOverlay, object: nil)
+                if run.pendingText.isEmpty {
+                    pasteSucceeded = true
+                } else {
+                    try? await Task.sleep(nanoseconds: 100_000_000)  // 100ms, as above
+                    // The leading separator only belongs after the text typed into the same app.
+                    let sameTarget = NSWorkspace.shared.frontmostApplication?.processIdentifier == run.targetPID
+                    let pending = sameTarget ? run.pendingText : run.pendingText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    LatencyLog.log("stop.to_paste", since: stopPressedAt)
+                    pasteSucceeded = await paste(pending)
                 }
-                LatencyLog.log("stop.paste", since: pasteStart)
 
-                pasteSucceeded = pasteResult.succeeded
-
-                // Show notification if paste failed
-                if !pasteSucceeded {
-                    showPasteFailedNotification(pasteResult: pasteResult)
-                }
+            case .clipboard(let text, let run):
+                targetApp = run.targetName
+                NotificationCenter.default.post(name: .hideRecordingOverlay, object: nil)
+                PasteService.shared.copyToClipboard(text)
+                showLiveTypingInterruptedNotification()
             }
 
             // Save recording to history (enforces 100-item limit automatically)
@@ -447,6 +495,61 @@ class AppState: ObservableObject {
             // Hide overlay after showing error
             NotificationCenter.default.post(name: .hideRecordingOverlay, object: nil)
         }
+    }
+
+    /// Stop path of a live-typed recording: finishes the session, waits until every segment
+    /// is typed (or set aside), then decides what is left to deliver. When nothing was typed
+    /// live (language never settled, target changed before the first segment…) the recording
+    /// is delivered exactly as without live typing.
+    private func finishLiveTyping(_ live: LiveTypingRun, session: IncrementalTranscriber,
+                                  service: TranscriptionService, audioURL: URL,
+                                  duration: TimeInterval, stopPressedAt: UInt64) async throws -> Delivery {
+        let startedAt = LatencyLog.now()
+        let outcome = await service.finish(incremental: session, recordedDuration: duration)
+        // The session has released its last segment (or closed the stream): wait for the typing.
+        await live.drain()
+        LatencyLog.log("stop.live_typed_segments", count: live.typedCount)
+        if let typedAt = live.lastTypedAt {
+            // 0 when everything was typed before the stop press.
+            LatencyLog.log("stop.to_last_typed", ms: typedAt > stopPressedAt ? Double(typedAt - stopPressedAt) / 1_000_000 : 0)
+        }
+
+        switch outcome {
+        case .transcript(let raw, _):
+            if live.hasTyped {
+                LatencyLog.log("stop.transcribe_total", since: startedAt)
+                return .live(live)
+            }
+            let text = await service.postProcess(raw)
+            LatencyLog.log("stop.transcribe_total", since: startedAt)
+            return .paste(text)
+
+        case .fallback(let reason):
+            let text = try await service.transcribe(audioURL: audioURL, afterIncrementalFallback: reason)
+            guard live.hasTyped else { return .paste(text) }
+            // Nothing better than what was typed: keep it, paste what was set aside.
+            if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return .live(live) }
+            return .clipboard(text, live)
+        }
+    }
+
+    /// Pastes `text` with PasteService (clipboard + Cmd+V) and reports a failure.
+    private func paste(_ text: String) async -> Bool {
+        let pasteStart = LatencyLog.now()
+
+        // Use continuation to await the paste result
+        let pasteResult = await withCheckedContinuation { continuation in
+            PasteService.shared.pasteText(text) { result in
+                continuation.resume(returning: result)
+            }
+        }
+        LatencyLog.log("stop.paste", since: pasteStart)
+
+        // Show notification if paste failed
+        if !pasteResult.succeeded {
+            showPasteFailedNotification(pasteResult: pasteResult)
+        }
+        return pasteResult.succeeded
     }
 
     // MARK: - Shortcut Actions
@@ -489,6 +592,25 @@ class AppState: ObservableObject {
 
     // MARK: - Notifications
 
+    private func showLiveTypingInterruptedNotification() {
+        let content = UNMutableNotificationContent()
+        content.title = "Live typing was interrupted"
+        content.body = "The full dictation is on the clipboard — press ⌘V where you need it."
+        content.sound = .default
+
+        let request = UNNotificationRequest(
+            identifier: "live-typing-interrupted-\(UUID().uuidString)",
+            content: content,
+            trigger: nil // Deliver immediately
+        )
+
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error = error {
+                print("Failed to show live typing notification: \(error)")
+            }
+        }
+    }
+
     private func showPasteFailedNotification(pasteResult: PasteResult) {
         let content = UNMutableNotificationContent()
         content.title = "Paste Failed"
@@ -517,6 +639,75 @@ class AppState: ObservableObject {
                 print("Failed to show paste notification: \(error)")
             }
         }
+    }
+}
+
+// MARK: - Live Typing
+
+/// One recording's live typing: reads the session's segments in order, post-processes each
+/// one and types it into the app that was frontmost when the recording started. From the
+/// first segment that cannot be typed there (another app came to the front, secure input,
+/// typing failed) every later segment is set aside in `pendingText`, pasted at stop.
+@MainActor
+final class LiveTypingRun {
+    let targetPID: pid_t
+    let targetName: String?
+    /// All delivered text so far (typed, then pending), joined the way it is typed.
+    private(set) var fullText = ""
+    /// The part of `fullText` that could not be typed, with its leading separator.
+    private(set) var pendingText = ""
+    private(set) var typedCount = 0
+    /// `LatencyLog.now()` when the last segment finished typing.
+    private(set) var lastTypedAt: UInt64?
+    private var typingActive = true
+    private var cancelled = false
+    private var consumer: Task<Void, Never>?
+
+    var hasTyped: Bool { typedCount > 0 }
+
+    init(session: IncrementalTranscriber, target: NSRunningApplication) {
+        targetPID = target.processIdentifier
+        targetName = target.localizedName
+        let segments = session.liveSegments
+        consumer = Task { [weak self] in
+            let service = TranscriptionService()
+            for await raw in segments {
+                let text = await service.postProcess(raw, timed: false)
+                guard let self, !self.cancelled else { return }
+                await self.deliver(text)
+            }
+        }
+    }
+
+    /// Returns once every released segment has been typed or set aside (the session's stream
+    /// must have finished, or `cancel` been called).
+    func drain() async {
+        await consumer?.value
+    }
+
+    /// Recording cancelled: stop typing. What was typed stays where it is.
+    func cancel() {
+        cancelled = true
+        typingActive = false
+        consumer?.cancel()
+    }
+
+    private func deliver(_ processed: String) async {
+        let text = processed.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        let part = LiveTyping.separator(after: fullText, before: text) + text
+        fullText += part
+
+        if typingActive, !cancelled,
+           NSWorkspace.shared.frontmostApplication?.processIdentifier == targetPID,
+           !TypingService.shared.isSecureInputActive,
+           await TypingService.shared.type(part) {
+            typedCount += 1
+            lastTypedAt = LatencyLog.now()
+            return
+        }
+        typingActive = false
+        pendingText += part
     }
 }
 

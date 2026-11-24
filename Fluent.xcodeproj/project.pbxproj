@@ -67,6 +67,7 @@
 		061 /* AudarEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 161 /* AudarEngine.swift */; };
 		064 /* IncrementalTranscriber.swift in Sources */ = {isa = PBXBuildFile; fileRef = 164 /* IncrementalTranscriber.swift */; };
 		065 /* SpeechCleanup.swift in Sources */ = {isa = PBXBuildFile; fileRef = 165 /* SpeechCleanup.swift */; };
+		066 /* TypingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 166 /* TypingService.swift */; };
 		062 /* AudarModelManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 162 /* AudarModelManager.swift */; };
 /* End PBXBuildFile section */
 
@@ -144,6 +145,7 @@
 		161 /* AudarEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudarEngine.swift; sourceTree = "<group>"; };
 		164 /* IncrementalTranscriber.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IncrementalTranscriber.swift; sourceTree = "<group>"; };
 		165 /* SpeechCleanup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechCleanup.swift; sourceTree = "<group>"; };
+		166 /* TypingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypingService.swift; sourceTree = "<group>"; };
 		162 /* AudarModelManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudarModelManager.swift; sourceTree = "<group>"; };
 		900 /* Fluent.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Fluent.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -339,6 +341,7 @@
 				115 /* PermissionService.swift */,
 				151 /* SystemAudioService.swift */,
 				163 /* LatencyLog.swift */,
+				166 /* TypingService.swift */,
 			);
 			path = System;
 			sourceTree = "<group>";
@@ -538,6 +541,7 @@
 				061 /* AudarEngine.swift in Sources */,
 				064 /* IncrementalTranscriber.swift in Sources */,
 				065 /* SpeechCleanup.swift in Sources */,
+				066 /* TypingService.swift in Sources */,
 				062 /* AudarModelManager.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

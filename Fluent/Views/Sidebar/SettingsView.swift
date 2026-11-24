@@ -520,6 +520,14 @@ struct TranscriptionSettingsCard: View {
                 isOn: $settingsService.settings.cleanupEnabled
             )
 
+            FluentDivider(inset: true)
+
+            FluentToggle(
+                title: "Type While You Speak",
+                description: "Arabic dictation appears in the text field as you talk, a phrase at a time, instead of all at once when you stop",
+                isOn: $settingsService.settings.liveTypingEnabled
+            )
+
         }
     }
 }

@@ -165,6 +165,56 @@ struct SpeechSegmenter {
     }
 }
 
+/// Releases finished segment texts in segment order, holding them back until the session's
+/// language is settled (see `IncrementalTranscriber.liveSegments`). Pure, for the self-test.
+struct LiveSegmentGate {
+    /// True once the session can no longer be abandoned for a language reason.
+    private(set) var isSettled: Bool
+    /// True once nothing more may be released (session finished, abandoned or failed).
+    private(set) var isClosed = false
+    /// Finished segments not released yet, by segment index (nil text = nothing to release).
+    private var finished: [Int: String?] = [:]
+    /// Index of the next segment to release.
+    private(set) var nextIndex = 0
+
+    init(settled: Bool) {
+        isSettled = settled
+    }
+
+    /// Segment `index` finished with `text` (nil when it produced nothing). Returns the texts
+    /// that can be released now, in order.
+    mutating func complete(_ index: Int, text: String?) -> [String] {
+        guard !isClosed, index >= nextIndex else { return [] }
+        finished[index] = text
+        return release()
+    }
+
+    /// The language is settled: returns every held text that is now in order.
+    mutating func settle() -> [String] {
+        guard !isClosed, !isSettled else { return [] }
+        isSettled = true
+        return release()
+    }
+
+    /// Nothing more is released; held texts are dropped.
+    mutating func close() {
+        isClosed = true
+        finished.removeAll()
+    }
+
+    private mutating func release() -> [String] {
+        guard isSettled else { return [] }
+        var ready: [String] = []
+        while let entry = finished.removeValue(forKey: nextIndex) {
+            nextIndex += 1
+            if let text = entry?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
+                ready.append(text)
+            }
+        }
+        return ready
+    }
+}
+
 /// Transcribes a recording with Audar while it is still being recorded: each finished speech
 /// segment is queued for Audar as soon as the user pauses, so at stop only the last segment
 /// is left. One instance per recording.
@@ -206,6 +256,17 @@ actor IncrementalTranscriber {
 
     /// The language setting this session was started for ("ar", or "" for auto).
     nonisolated let languageSetting: String
+
+    /// Raw Audar text of each segment (not post-processed), in segment order, as soon as it is
+    /// transcribed and the language is settled: at once for Arabic (or auto without Whisper,
+    /// where nothing can abandon the session for a language reason); in auto mode with
+    /// Whisper, held back until a detection routes to Audar with enough confidence, the second
+    /// detection routes to Audar, or `finish` has run the last detection. Empty texts are
+    /// skipped. Finishes when the session finishes, abandons, fails or is cancelled; `finish`
+    /// still returns the whole text either way.
+    nonisolated let liveSegments: AsyncStream<String>
+    private let liveContinuation: AsyncStream<String>.Continuation
+    private var liveGate: LiveSegmentGate
 
     private let audarLanguage: String?
     private let detectsLanguage: Bool
@@ -260,6 +321,25 @@ actor IncrementalTranscriber {
         self.detectsLanguage = detectsLanguage
         self.segmenter = SpeechSegmenter(config: config)
         samples.reserveCapacity(60 * SpeechSegmenter.sampleRate)
+        var continuation: AsyncStream<String>.Continuation!
+        liveSegments = AsyncStream(bufferingPolicy: .unbounded) { continuation = $0 }
+        liveContinuation = continuation
+        liveGate = LiveSegmentGate(settled: !detectsLanguage)
+    }
+
+    // MARK: - Live stream
+
+    private func releaseLive(_ texts: [String]) {
+        for text in texts { liveContinuation.yield(text) }
+    }
+
+    private func settleLanguage() {
+        releaseLive(liveGate.settle())
+    }
+
+    private func closeLive() {
+        liveGate.close()
+        liveContinuation.finish()
     }
 
     // MARK: - Input
@@ -332,8 +412,12 @@ actor IncrementalTranscriber {
         segmentMs[index] = ms
         LatencyLog.log("rec.segment_asr", ms: ms, engine: SpeechEngine.audar.rawValue)
         switch outcome {
-        case .success(let text): texts[index] = text
-        case .failure: failure = "segment failed"
+        case .success(let text):
+            texts[index] = text
+            releaseLive(liveGate.complete(index, text: text))
+        case .failure:
+            failure = "segment failed"
+            closeLive()
         }
     }
 
@@ -380,6 +464,9 @@ actor IncrementalTranscriber {
         detection = result
         if !TranscriptionService.routesToAudar(language: result.language, confidence: result.confidence) {
             abandon("detected non-Arabic speech")
+        } else if result.confidence >= TranscriptionService.minimumDetectionConfidence || detectionRuns >= 2 {
+            // No later detection can run (see maybeDetectLanguage), so Audar keeps this recording.
+            settleLanguage()
         }
     }
 
@@ -387,6 +474,7 @@ actor IncrementalTranscriber {
         guard abandoned == nil else { return }
         abandoned = reason
         // Queued runs see `abandoned` and skip; a run already inside Audar finishes and is dropped.
+        closeLive()
     }
 
     // MARK: - Stop
@@ -396,6 +484,8 @@ actor IncrementalTranscriber {
     /// must be used. `recordedDuration` guards against a stream that lost audio.
     func finish(recordedDuration: TimeInterval) async -> Outcome {
         let start = LatencyLog.now()
+        // Every segment has been released (or dropped) by the time this returns.
+        defer { closeLive() }
         self.start()
         await feedTask?.value
         feedTask = nil
@@ -419,6 +509,8 @@ actor IncrementalTranscriber {
             if detectionRuns == 0 && detectionTask == nil { startDetection() }
             while let task = detectionTask { await task.value }
             if let abandoned { return .fallback(abandoned) }
+            // No detection runs after this point: the recording stays on Audar.
+            settleLanguage()
         }
 
         await lastRun?.value
