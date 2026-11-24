@@ -237,18 +237,25 @@ class AppState: ObservableObject {
         liveTyping = nil
         // Stopped already (the stop handler ran while this start was finishing): nothing to do.
         guard audioService.isRecording, !isStoppingRecording,
-              let stream = audioService.audioStream,
-              let session = IncrementalTranscriber.makeIfApplicable(stream: stream) else { return }
-        incrementalSession = session
-        Task { await session.start() }
+              let stream = audioService.audioStream else { return }
 
-        // Type each segment into the app the user is dictating into, unless that is Fluent
-        // itself (or posting keyboard events is not allowed): then the text is pasted at stop.
+        // Type the words into the app the user is dictating into while they speak, unless that
+        // is Fluent itself (or posting keyboard events is not allowed): then the text is pasted
+        // at stop. Only a typed recording re-reads its open segment (streaming).
+        var liveTarget: NSRunningApplication?
         if settingsService.settings.liveTypingEnabled,
            AXIsProcessTrusted(),
            let target = NSWorkspace.shared.frontmostApplication,
            target.bundleIdentifier != Bundle.main.bundleIdentifier {
-            liveTyping = LiveTypingRun(session: session, target: target)
+            liveTarget = target
+        }
+        guard let session = IncrementalTranscriber.makeIfApplicable(
+            stream: stream, streaming: liveTarget == nil ? nil : StreamingConfig()
+        ) else { return }
+        incrementalSession = session
+        Task { await session.start() }
+        if let liveTarget {
+            liveTyping = LiveTypingRun(session: session, target: liveTarget)
         }
     }
 
@@ -644,10 +651,12 @@ class AppState: ObservableObject {
 
 // MARK: - Live Typing
 
-/// One recording's live typing: reads the session's segments in order, post-processes each
-/// one and types it into the app that was frontmost when the recording started. From the
-/// first segment that cannot be typed there (another app came to the front, secure input,
-/// typing failed) every later segment is set aside in `pendingText`, pasted at stop.
+/// One recording's live typing: reads the session's events in order and types each committed
+/// word into the app that was frontmost when the recording started, as soon as it comes. The
+/// punctuation after a word is typed with the next word (or at the end of its segment), once
+/// the punctuation model has seen what follows it. Nothing typed is ever deleted. From the
+/// first part that cannot be typed there (another app came to the front, secure input, typing
+/// failed) every later part is set aside in `pendingText`, pasted at stop.
 @MainActor
 final class LiveTypingRun {
     let targetPID: pid_t
@@ -656,30 +665,31 @@ final class LiveTypingRun {
     private(set) var fullText = ""
     /// The part of `fullText` that could not be typed, with its leading separator.
     private(set) var pendingText = ""
+    /// Parts typed so far (a part is one or more words, or a punctuation mark).
     private(set) var typedCount = 0
-    /// `LatencyLog.now()` when the last segment finished typing.
+    /// `LatencyLog.now()` when the last part finished typing.
     private(set) var lastTypedAt: UInt64?
     private var typingActive = true
     private var cancelled = false
     private var consumer: Task<Void, Never>?
+    /// Punctuation state of the segment being typed.
+    private var segment = StreamingSegmentTyping()
 
     var hasTyped: Bool { typedCount > 0 }
 
     init(session: IncrementalTranscriber, target: NSRunningApplication) {
         targetPID = target.processIdentifier
         targetName = target.localizedName
-        let segments = session.liveSegments
+        let events = session.liveEvents
         consumer = Task { [weak self] in
-            let service = TranscriptionService()
-            for await raw in segments {
-                let text = await service.postProcess(raw, timed: false)
+            for await event in events {
                 guard let self, !self.cancelled else { return }
-                await self.deliver(text)
+                await self.handle(event)
             }
         }
     }
 
-    /// Returns once every released segment has been typed or set aside (the session's stream
+    /// Returns once every released event has been typed or set aside (the session's stream
     /// must have finished, or `cancel` been called).
     func drain() async {
         await consumer?.value
@@ -692,10 +702,51 @@ final class LiveTypingRun {
         consumer?.cancel()
     }
 
-    private func deliver(_ processed: String) async {
-        let text = processed.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        let part = LiveTyping.separator(after: fullText, before: text) + text
+    private func handle(_ event: LiveEvent) async {
+        let formatting = SettingsService.shared.settings.formatTextEnabled
+        let new: [String]
+        let lookahead: [String]
+        let isEnd: Bool
+        switch event {
+        case .words(let words, let rest):
+            new = Self.prepare(words, formatting: formatting)
+            lookahead = Self.prepare(rest, formatting: formatting)
+            isEnd = false
+            guard !new.isEmpty else { return }
+        case .segmentEnd(let words):
+            new = Self.prepare(words, formatting: formatting)
+            lookahead = []
+            isEnd = true
+            guard !new.isEmpty || !segment.typed.isEmpty else { return }
+        }
+
+        let formatted = formatting ? await Self.punctuate(segment.modelInput(new: new, lookahead: lookahead)) : nil
+        guard !cancelled else { return }
+        let step = segment.step(new: new, lookahead: lookahead, formatted: formatted, isEnd: isEnd)
+        if isEnd { segment = StreamingSegmentTyping() }
+        await deliver(LiveTyping.part(after: fullText, step))
+    }
+
+    /// Committed words as typed: bracketed words unwrapped (sound tags dropped) and, when the
+    /// punctuation model formats the text, without the engine's own sentence punctuation.
+    static func prepare(_ words: [String], formatting: Bool) -> [String] {
+        words.flatMap { word -> [String] in
+            let unwrapped = SpeechCleanup.unwrapBrackets(word, nonSpeechPhrases: TranscriptionService.hallucinationPhrases)
+            let text = formatting ? PunctuationEngine.stripTrailingSentencePunctuation(unwrapped) : unwrapped
+            return StreamingText.words(text)
+        }
+    }
+
+    /// The punctuation model's output for `text`, or nil when it is not available.
+    static func punctuate(_ text: String) async -> String? {
+        let model = PunctuationModelManager.shared
+        if !model.state.isReady { try? await model.loadModel() }
+        guard model.state.isReady else { return nil }
+        return try? await model.infer(text: text)
+    }
+
+    private func deliver(_ part: String) async {
+        guard !part.isEmpty else { return }
         fullText += part
 
         if typingActive, !cancelled,

@@ -165,15 +165,19 @@ struct SpeechSegmenter {
     }
 }
 
-/// Releases finished segment texts in segment order, holding them back until the session's
-/// language is settled (see `IncrementalTranscriber.liveSegments`). Pure, for the self-test.
-struct LiveSegmentGate {
+/// Releases a session's live items in segment order, holding them back until the session's
+/// language is settled (see `IncrementalTranscriber.liveEvents`). A segment can release items
+/// while it is open (words committed as they are spoken) and one last item when it is done;
+/// nothing of a later segment comes out before an earlier one is done. Pure, for the self-test.
+struct LiveSegmentGate<Item> {
     /// True once the session can no longer be abandoned for a language reason.
     private(set) var isSettled: Bool
     /// True once nothing more may be released (session finished, abandoned or failed).
     private(set) var isClosed = false
-    /// Finished segments not released yet, by segment index (nil text = nothing to release).
-    private var finished: [Int: String?] = [:]
+    /// Items not released yet, by segment index.
+    private var held: [Int: [Item]] = [:]
+    /// Segments that are done but not released yet.
+    private var done: Set<Int> = []
     /// Index of the next segment to release.
     private(set) var nextIndex = 0
 
@@ -181,43 +185,82 @@ struct LiveSegmentGate {
         isSettled = settled
     }
 
-    /// Segment `index` finished with `text` (nil when it produced nothing). Returns the texts
-    /// that can be released now, in order.
-    mutating func complete(_ index: Int, text: String?) -> [String] {
+    /// An item of segment `index` while it is still open. Returns what can be released now.
+    mutating func add(_ index: Int, _ item: Item) -> [Item] {
         guard !isClosed, index >= nextIndex else { return [] }
-        finished[index] = text
+        held[index, default: []].append(item)
         return release()
     }
 
-    /// The language is settled: returns every held text that is now in order.
-    mutating func settle() -> [String] {
+    /// Segment `index` is done; `item` (if any) is its last. Returns what can be released now,
+    /// in order.
+    mutating func complete(_ index: Int, _ item: Item?) -> [Item] {
+        guard !isClosed, index >= nextIndex else { return [] }
+        if let item { held[index, default: []].append(item) }
+        done.insert(index)
+        return release()
+    }
+
+    /// The language is settled: returns every held item that is now in order.
+    mutating func settle() -> [Item] {
         guard !isClosed, !isSettled else { return [] }
         isSettled = true
         return release()
     }
 
-    /// Nothing more is released; held texts are dropped.
+    /// Nothing more is released; held items are dropped.
     mutating func close() {
         isClosed = true
-        finished.removeAll()
+        held.removeAll()
+        done.removeAll()
     }
 
-    private mutating func release() -> [String] {
+    private mutating func release() -> [Item] {
         guard isSettled else { return [] }
-        var ready: [String] = []
-        while let entry = finished.removeValue(forKey: nextIndex) {
+        var ready: [Item] = []
+        while true {
+            if let items = held.removeValue(forKey: nextIndex) { ready += items }
+            guard done.remove(nextIndex) != nil else { break }
             nextIndex += 1
-            if let text = entry?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
-                ready.append(text)
-            }
         }
         return ready
     }
 }
 
+/// What live typing receives from a session, in order.
+enum LiveEvent: Equatable, Sendable {
+    /// Words of the open segment committed now (brackets unwrapped, cleanup applied), and the
+    /// rest of the latest hypothesis after them: not committed, only context for punctuation.
+    case words([String], lookahead: [String])
+    /// The segment is transcribed: the words of its final text that follow the committed ones
+    /// (all of them when nothing was committed; none for a hallucination).
+    case segmentEnd([String])
+}
+
+/// Streaming live typing: while a segment is still open, Audar re-reads its audio so far
+/// ("partial pass") and the committer types the words that are stable enough.
+struct StreamingConfig {
+    /// Measured with `--streaming-selftest` (6 Casablanca clips + a 43 s own-voice clip, real
+    /// time): local agreement at 0.5 s typed words ~1 s after they were heard with 12% of
+    /// early words differing from the final text and no loss against references; HOLD-1 was
+    /// ~0.5 s faster but 20% of its early words differed.
+    var policy: StreamingCommitter.Policy = .localAgreement
+    /// A partial pass needs at least this much new audio since the previous one.
+    var partialInterval = 0.5
+    /// First partial pass of a segment once it holds this much audio.
+    var minPartialSeconds = 1.0
+    /// A partial pass slower than this (a long segment) ends partial passes for that segment;
+    /// its words are then typed when it closes, as without streaming.
+    var maxPartialMs = 1500.0
+}
+
 /// Transcribes a recording with Audar while it is still being recorded: each finished speech
 /// segment is queued for Audar as soon as the user pauses, so at stop only the last segment
 /// is left. One instance per recording.
+///
+/// With `streaming` (live typing on), Audar also re-reads the open segment whenever it is idle
+/// and enough new audio has come in, so words can be typed while they are spoken. Finished
+/// segments always go first: a partial pass only starts when no Audar run is queued or running.
 ///
 /// Used only when Audar would handle the recording anyway: language set to Arabic, or auto
 /// with Whisper's language detection (run on the first seconds of speech, while recording)
@@ -244,6 +287,21 @@ actor IncrementalTranscriber {
         var reason = ""
     }
 
+    /// One Audar run on a segment, for the DEBUG streaming self-test.
+    struct HypothesisRecord: Sendable {
+        var segment: Int
+        /// False for a partial pass on the open segment.
+        var isFinal: Bool
+        var text: String
+        /// End of the audio the run read, in seconds from the start of the recording.
+        var windowEnd: Double
+        var startedAt: UInt64
+        var finishedAt: UInt64
+        var ms: Double
+        /// A partial pass whose segment was still open when it finished (its words count).
+        var segmentOpen = false
+    }
+
     /// Whisper detection starts after this much speech, and once more after the second
     /// threshold when the first answer had low confidence.
     private static let detectionSpeechSeconds = 3.0
@@ -257,32 +315,47 @@ actor IncrementalTranscriber {
     /// The language setting this session was started for ("ar", or "" for auto).
     nonisolated let languageSetting: String
 
-    /// Raw Audar text of each segment (not post-processed), in segment order, as soon as it is
-    /// transcribed and the language is settled: at once for Arabic (or auto without Whisper,
-    /// where nothing can abandon the session for a language reason); in auto mode with
-    /// Whisper, held back until a detection routes to Audar with enough confidence, the second
-    /// detection routes to Audar, or `finish` has run the last detection. Empty texts are
-    /// skipped. Finishes when the session finishes, abandons, fails or is cancelled; `finish`
-    /// still returns the whole text either way.
-    nonisolated let liveSegments: AsyncStream<String>
-    private let liveContinuation: AsyncStream<String>.Continuation
-    private var liveGate: LiveSegmentGate
+    /// What live typing types, in order, as soon as the language is settled: at once for
+    /// Arabic (or auto without Whisper, where nothing can abandon the session for a language
+    /// reason); in auto mode with Whisper, held back until a detection routes to Audar with
+    /// enough confidence, the second detection routes to Audar, or `finish` has run the last
+    /// detection. Without `streaming` only `.segmentEnd` events come. Finishes when the
+    /// session finishes, abandons, fails or is cancelled; `finish` still returns the whole
+    /// text either way.
+    nonisolated let liveEvents: AsyncStream<LiveEvent>
+    private let liveContinuation: AsyncStream<LiveEvent>.Continuation
+    private var liveGate: LiveSegmentGate<LiveEvent>
 
     private let audarLanguage: String?
     private let detectsLanguage: Bool
+    private let streaming: StreamingConfig?
     private var segmenter: SpeechSegmenter
     private var samples: [Float] = []
 
     /// The recorder's sample stream, until reading it starts.
     private var stream: AsyncStream<[Float]>?
     private var feedTask: Task<Void, Never>?
-    /// Last queued segment run; each run awaits the one before, so Audar sees them in order.
+    /// Last queued Audar run; each run awaits the one before, so Audar sees them in order.
     private var lastRun: Task<Void, Never>?
+    /// Audar runs queued or running (partial passes included).
+    private var runsInFlight = 0
     private var queued = 0
     private var texts: [Int: String] = [:]
     private var segmentMs: [Int: Double] = [:]
     private var segmentSeconds: [Double] = []
     private var failure: String?
+    /// Set by `finish`: no partial pass starts after the stop.
+    private var finishing = false
+
+    /// Commits words of the open segment (index `queued`); handed over when the segment closes.
+    private var openCommitter: StreamingCommitter
+    private var closedCommitters: [Int: StreamingCommitter] = [:]
+    /// Sample count read by the open segment's last partial pass.
+    private var lastPartialEnd: Int?
+    /// A partial pass of the open segment was too slow: no more for it.
+    private var partialsStopped = false
+    /// Hallucination filter, the same one the stop path uses.
+    private let filter = TranscriptionService()
 
     private var detectionTask: Task<Void, Never>?
     private var detectionRuns = 0
@@ -292,45 +365,58 @@ actor IncrementalTranscriber {
     private var abandoned: String?
     private var lastFormatterWarm: UInt64?
 
+    #if DEBUG
+    private var hypothesisObserver: (@Sendable (HypothesisRecord) -> Void)?
+
+    /// DEBUG self-test: called with every Audar run of this session (partial and final).
+    func observeHypotheses(_ observer: @escaping @Sendable (HypothesisRecord) -> Void) {
+        hypothesisObserver = observer
+    }
+    #endif
+
     /// A session for this recording, or nil when the full-file path will handle it
     /// (Audar not usable, or a language other than Arabic/auto).
     /// `stream` is the recorder's 16 kHz mono sample stream (`AudioRecordingService.audioStream`).
+    /// `streaming` turns on partial passes; only for a recording that is typed live.
     @MainActor
-    static func makeIfApplicable(stream: AsyncStream<[Float]>, config: SpeechSegmenter.Config = .init()) -> IncrementalTranscriber? {
+    static func makeIfApplicable(stream: AsyncStream<[Float]>, config: SpeechSegmenter.Config = .init(),
+                                 streaming: StreamingConfig? = nil) -> IncrementalTranscriber? {
         guard AudarModelManager.shared.isUsable else { return nil }
         let language = SettingsService.shared.settings.language.rawValue
         switch language {
         case "ar":
             return IncrementalTranscriber(stream: stream, languageSetting: language, audarLanguage: "ar",
-                                          detectsLanguage: false, config: config)
+                                          detectsLanguage: false, config: config, streaming: streaming)
         case "":
             // Same routing as TranscriptionService: without Whisper, Audar identifies the language itself.
             let whisperReady = ModelManager.shared.state.isReady
             return IncrementalTranscriber(stream: stream, languageSetting: language, audarLanguage: whisperReady ? "ar" : nil,
-                                          detectsLanguage: whisperReady, config: config)
+                                          detectsLanguage: whisperReady, config: config, streaming: streaming)
         default:
             return nil
         }
     }
 
     private init(stream: AsyncStream<[Float]>, languageSetting: String, audarLanguage: String?,
-                 detectsLanguage: Bool, config: SpeechSegmenter.Config) {
+                 detectsLanguage: Bool, config: SpeechSegmenter.Config, streaming: StreamingConfig?) {
         self.stream = stream
         self.languageSetting = languageSetting
         self.audarLanguage = audarLanguage
         self.detectsLanguage = detectsLanguage
+        self.streaming = streaming
         self.segmenter = SpeechSegmenter(config: config)
+        openCommitter = StreamingCommitter(policy: streaming?.policy ?? .localAgreement)
         samples.reserveCapacity(60 * SpeechSegmenter.sampleRate)
-        var continuation: AsyncStream<String>.Continuation!
-        liveSegments = AsyncStream(bufferingPolicy: .unbounded) { continuation = $0 }
+        var continuation: AsyncStream<LiveEvent>.Continuation!
+        liveEvents = AsyncStream(bufferingPolicy: .unbounded) { continuation = $0 }
         liveContinuation = continuation
         liveGate = LiveSegmentGate(settled: !detectsLanguage)
     }
 
     // MARK: - Live stream
 
-    private func releaseLive(_ texts: [String]) {
-        for text in texts { liveContinuation.yield(text) }
+    private func releaseLive(_ events: [LiveEvent]) {
+        for event in events { liveContinuation.yield(event) }
     }
 
     private func settleLanguage() {
@@ -340,6 +426,22 @@ actor IncrementalTranscriber {
     private func closeLive() {
         liveGate.close()
         liveContinuation.finish()
+    }
+
+    /// The words a raw Audar text contributes, processed as the stop path does before
+    /// punctuation (sound tags out, bracketed words unwrapped, speech cleanup), and false for
+    /// a hallucination (no words then).
+    static func hypothesisWords(_ raw: String, filter: TranscriptionService, cleanup: Bool) -> (words: [String], acceptable: Bool) {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if filter.isHallucination(trimmed) { return ([], false) }
+        var text = SpeechCleanup.unwrapBrackets(trimmed, nonSpeechPhrases: TranscriptionService.hallucinationPhrases)
+        if text != trimmed && (text.isEmpty || filter.isHallucination(text)) { return ([], false) }
+        if cleanup { text = SpeechCleanup.clean(text) }
+        return (StreamingText.words(text), true)
+    }
+
+    private func hypothesisWords(_ raw: String) -> (words: [String], acceptable: Bool) {
+        Self.hypothesisWords(raw, filter: filter, cleanup: SettingsService.shared.settings.cleanupEnabled)
     }
 
     // MARK: - Input
@@ -365,6 +467,7 @@ actor IncrementalTranscriber {
         }
         if detectsLanguage { maybeDetectLanguage() }
         keepFormatterWarm()
+        maybeRunPartial()
     }
 
     /// Runs a prediction on a fixed phrase (never transcript text); the result is discarded.
@@ -385,13 +488,25 @@ actor IncrementalTranscriber {
         guard abandoned == nil else { return }
         let index = queued
         queued += 1
+        // The open segment's committer goes with it; the next segment starts fresh.
+        closedCommitters[index] = openCommitter
+        openCommitter = StreamingCommitter(policy: openCommitter.policy)
+        lastPartialEnd = nil
+        partialsStopped = false
+
         let audio = Array(samples[range])
+        let windowEnd = Double(range.upperBound) / Double(SpeechSegmenter.sampleRate)
         segmentSeconds.append(Double(audio.count) / Double(SpeechSegmenter.sampleRate))
         let language = audarLanguage
         let previous = lastRun
+        runsInFlight += 1
         lastRun = Task { [weak self] in
             await previous?.value
-            guard let self, await self.shouldRun() else { return }
+            guard let self else { return }
+            guard await self.shouldRun() else {
+                await self.runSkipped()
+                return
+            }
             let audar = await AudarModelManager.shared
             let start = LatencyLog.now()
             let outcome: Result<String, Error>
@@ -400,7 +515,7 @@ actor IncrementalTranscriber {
             } catch {
                 outcome = .failure(error)
             }
-            await self.record(index, outcome, ms: LatencyLog.ms(since: start))
+            await self.record(index, outcome, startedAt: start, windowEnd: windowEnd)
         }
     }
 
@@ -408,17 +523,89 @@ actor IncrementalTranscriber {
         abandoned == nil && failure == nil
     }
 
-    private func record(_ index: Int, _ outcome: Result<String, Error>, ms: Double) {
+    private func runSkipped() {
+        runsInFlight -= 1
+    }
+
+    private func record(_ index: Int, _ outcome: Result<String, Error>, startedAt: UInt64, windowEnd: Double) {
+        runsInFlight -= 1
+        let ms = LatencyLog.ms(since: startedAt)
         segmentMs[index] = ms
         LatencyLog.log("rec.segment_asr", ms: ms, engine: SpeechEngine.audar.rawValue)
         switch outcome {
         case .success(let text):
             texts[index] = text
-            releaseLive(liveGate.complete(index, text: text))
+            #if DEBUG
+            hypothesisObserver?(HypothesisRecord(segment: index, isFinal: true, text: text, windowEnd: windowEnd,
+                                                 startedAt: startedAt, finishedAt: LatencyLog.now(), ms: ms))
+            #endif
+            let hypothesis = hypothesisWords(text)
+            var committer = closedCommitters.removeValue(forKey: index) ?? StreamingCommitter(policy: openCommitter.policy)
+            // A hallucination adds nothing; words typed before it stay (they cannot be taken back).
+            let rest = hypothesis.acceptable ? committer.finish(hypothesis.words) : []
+            releaseLive(liveGate.complete(index, .segmentEnd(rest)))
         case .failure:
             failure = "segment failed"
             closeLive()
         }
+        maybeRunPartial()
+    }
+
+    // MARK: - Partial passes (streaming)
+
+    /// Starts a partial pass on the open segment when Audar is idle, the segment holds speech
+    /// and enough audio has come in since the last pass.
+    private func maybeRunPartial() {
+        guard let streaming, !finishing, !partialsStopped, abandoned == nil, failure == nil,
+              runsInFlight == 0, segmenter.segmentSpeechFrames > 0 else { return }
+        let start = segmenter.segmentStart
+        let end = samples.count
+        let rate = Double(SpeechSegmenter.sampleRate)
+        guard end - start >= Int(streaming.minPartialSeconds * rate),
+              end - (lastPartialEnd ?? start) >= Int(streaming.partialInterval * rate) else { return }
+        lastPartialEnd = end
+
+        let index = queued
+        let audio = Array(samples[start..<end])
+        let windowEnd = Double(end) / rate
+        let language = audarLanguage
+        let previous = lastRun
+        runsInFlight += 1
+        lastRun = Task { [weak self] in
+            await previous?.value
+            guard let self else { return }
+            let audar = await AudarModelManager.shared
+            let start = LatencyLog.now()
+            let text = try? await audar.transcribe(samples: audio, language: language)
+            await self.recordPartial(index, text, startedAt: start, windowEnd: windowEnd)
+        }
+    }
+
+    private func recordPartial(_ index: Int, _ text: String?, startedAt: UInt64, windowEnd: Double) {
+        runsInFlight -= 1
+        let ms = LatencyLog.ms(since: startedAt)
+        LatencyLog.log("rec.partial_asr", ms: ms)
+        #if DEBUG
+        if let text {
+            hypothesisObserver?(HypothesisRecord(segment: index, isFinal: false, text: text, windowEnd: windowEnd,
+                                                 startedAt: startedAt, finishedAt: LatencyLog.now(), ms: ms,
+                                                 segmentOpen: index == queued))
+        }
+        #endif
+        // Only while the segment is still open: once it closed, its final pass decides.
+        if index == queued, abandoned == nil, failure == nil {
+            if let streaming, ms > streaming.maxPartialMs { partialsStopped = true }
+            if let text {
+                let hypothesis = hypothesisWords(text)
+                let update = openCommitter.update(hypothesis.words, acceptable: hypothesis.acceptable)
+                if !update.words.isEmpty {
+                    releaseLive(liveGate.add(index, .words(update.words, lookahead: update.lookahead)))
+                }
+            } else {
+                partialsStopped = true
+            }
+        }
+        maybeRunPartial()
     }
 
     // MARK: - Language detection (auto)
@@ -484,6 +671,7 @@ actor IncrementalTranscriber {
     /// must be used. `recordedDuration` guards against a stream that lost audio.
     func finish(recordedDuration: TimeInterval) async -> Outcome {
         let start = LatencyLog.now()
+        finishing = true
         // Every segment has been released (or dropped) by the time this returns.
         defer { closeLive() }
         self.start()

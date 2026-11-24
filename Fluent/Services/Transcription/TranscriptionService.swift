@@ -195,8 +195,9 @@ class TranscriptionService {
         return false
     }
 
-    /// Checks if the transcription is likely a Whisper hallucination
-    private func isHallucination(_ text: String) -> Bool {
+    /// Checks if the transcription is likely a Whisper hallucination. Internal (not private)
+    /// so streaming live typing filters each hypothesis the same way (`IncrementalTranscriber`).
+    func isHallucination(_ text: String) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
         // 1. Reject if entire text is wrapped in brackets or parentheses

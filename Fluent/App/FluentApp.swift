@@ -119,8 +119,15 @@ enum PunctuationSelfTest {
         if let index = arguments.firstIndex(of: "--incremental-selftest"), index + 2 < arguments.count {
             // Transcription while recording, fed in 100 ms chunks like the microphone tap, then
             // compared with the full-file path (one file, or every .wav/.m4a in a folder):
-            //   Fluent --incremental-selftest /path/to/audio.m4a ar|auto [--fast] [--min-segment 2.5]
+            //   Fluent --incremental-selftest /path/to/audio.m4a ar|auto [--fast] [--live] [--min-segment 2.5]
             runIncrementalSelfTest(arguments[index + 1], language: arguments[index + 2], arguments: arguments)
+        }
+        if arguments.contains("--streaming-selftest") {
+            // Streaming live typing simulated in real time: partial passes on the open segment,
+            // commit policies compared offline on the same hypotheses (posts no keyboard events):
+            //   Fluent --streaming-selftest clip.wav|dir [...] [--interval 0.5|0] [--refs refs.json]
+            //          [--max-partial-ms 1500] [--min-partial 1.0] [--max-segment 25] [--relax-after 8]
+            runStreamingSelfTest(arguments)
         }
         if arguments.contains("--live-typing-selftest") {
             // Live typing rules without posting any keyboard event: chunking, spacing between
@@ -351,6 +358,8 @@ enum PunctuationSelfTest {
             let settingsService = SettingsService.shared
             let originalSettings = settingsService.settings
             let fast = arguments.contains("--fast")
+            // As a live-typed recording: partial passes, words streamed (see the "live" rows).
+            let live = arguments.contains("--live")
             var config = SpeechSegmenter.Config()
             if let index = arguments.firstIndex(of: "--min-segment"), index + 1 < arguments.count,
                let value = Double(arguments[index + 1]) {
@@ -382,7 +391,7 @@ enum PunctuationSelfTest {
                 try await whisper.loadModel()
                 try await PunctuationModelManager.shared.loadModel()
                 try await audar.loadModel()
-                log("engines loaded, audar usable=\(audar.isUsable) fast=\(fast) min_segment=\(config.minSegmentSeconds) pause=\(config.pauseSeconds) relax_after=\(config.relaxAfterSeconds)")
+                log("engines loaded, audar usable=\(audar.isUsable) fast=\(fast) live=\(live) min_segment=\(config.minSegmentSeconds) pause=\(config.pauseSeconds) relax_after=\(config.relaxAfterSeconds)")
 
                 var isDirectory: ObjCBool = false
                 FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
@@ -404,44 +413,23 @@ enum PunctuationSelfTest {
                     // buffers (~90 ms) through the tap's StreamingResampler, at recording pace.
                     var continuation: AsyncStream<[Float]>.Continuation!
                     let stream = AsyncStream<[Float]> { continuation = $0 }
-                    guard let session = IncrementalTranscriber.makeIfApplicable(stream: stream, config: config) else {
+                    guard let session = IncrementalTranscriber.makeIfApplicable(
+                        stream: stream, config: config, streaming: live ? StreamingConfig() : nil
+                    ) else {
                         log("\(file): incremental path not applicable (Audar unusable or language not ar/auto)")
                         continue
                     }
                     await session.start()
-                    // What live typing would receive: each released segment, and whether it
+                    // What live typing would receive: each released event, and whether it
                     // came before the "stop" (posts no keyboard events).
-                    let liveSegments = session.liveSegments
-                    let liveCollector = Task { () -> [(text: String, at: UInt64)] in
-                        var released: [(text: String, at: UInt64)] = []
-                        for await text in liveSegments { released.append((text, LatencyLog.now())) }
+                    let liveEvents = session.liveEvents
+                    let liveCollector = Task { () -> [(event: LiveEvent, at: UInt64)] in
+                        var released: [(event: LiveEvent, at: UInt64)] = []
+                        for await event in liveEvents { released.append((event, LatencyLog.now())) }
                         return released
                     }
-                    let audioFile = try AVAudioFile(forReading: url)
-                    let format = audioFile.processingFormat
-                    let resampler = StreamingResampler()
-                    var streamed: [Float] = []
-                    var fedSeconds = 0.0
-                    let feedStart = LatencyLog.now()
-                    while audioFile.framePosition < audioFile.length {
-                        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4096) else { break }
-                        try audioFile.read(into: buffer, frameCount: 4096)
-                        guard buffer.frameLength > 0 else { break }
-                        if let out = resampler.process(buffer), !out.isEmpty {
-                            continuation.yield(out)
-                            streamed += out
-                        }
-                        fedSeconds += Double(buffer.frameLength) / format.sampleRate
-                        if fast {
-                            await Task.yield()
-                        } else {
-                            let due = feedStart + UInt64(fedSeconds * 1_000_000_000)
-                            let now = LatencyLog.now()
-                            if due > now { try await Task.sleep(nanoseconds: due - now) }
-                        }
-                    }
-                    let tail = resampler.flush()
-                    if !tail.isEmpty { continuation.yield(tail); streamed += tail }
+                    let format = try AVAudioFile(forReading: url).processingFormat
+                    let streamed = try await feed(url, into: continuation, fast: fast)
                     continuation.finish()
                     let stopAt = LatencyLog.now()
                     let service = TranscriptionService()
@@ -461,13 +449,9 @@ enum PunctuationSelfTest {
                         .joined(separator: "\t"))
                     fflush(stdout)
                     let released = await liveCollector.value
-                    var liveTyped: [String] = []
-                    for segment in released {
-                        let processed = await service.postProcess(segment.text, timed: false)
-                        if !processed.isEmpty { liveTyped.append(processed) }
-                    }
-                    log("\(file): live stream released \(released.count) segments, \(released.filter { $0.at < stopAt }.count) before stop")
-                    print(["live", file, "-", String(released.count), "-", "", clean(LiveTyping.join(liveTyped))]
+                    let liveTyped = await typeOffline(released.map(\.event))
+                    log("\(file): live stream released \(released.count) events, \(released.filter { $0.at < stopAt }.count) before stop")
+                    print(["live", file, "-", String(released.count), "-", "", clean(liveTyped)]
                         .joined(separator: "\t"))
                     fflush(stdout)
                     log("\(file) \(String(format: "%.1f", seconds))s: stop→text \(ms(stopMs))ms (last segments \(ms(t.asrMs))ms, format \(ms(t.formattingMs))ms), segments \(t.segments ?? 0) [\(zip(t.segmentSeconds, t.segmentMs).map { String(format: "%.1fs:%.0f", $0, $1) }.joined(separator: " "))]")
@@ -491,6 +475,316 @@ enum PunctuationSelfTest {
             exit(0)
         }
         dispatchMain()
+    }
+
+    /// Every Audar run of a session, in completion order (filled from the session's actor).
+    private final class HypothesisLog: @unchecked Sendable {
+        private let lock = NSLock()
+        private var items: [IncrementalTranscriber.HypothesisRecord] = []
+        func append(_ item: IncrementalTranscriber.HypothesisRecord) {
+            lock.lock(); items.append(item); lock.unlock()
+        }
+        var records: [IncrementalTranscriber.HypothesisRecord] {
+            lock.lock(); defer { lock.unlock() }
+            return items
+        }
+    }
+
+    /// Totals of one commit policy over several clips.
+    private struct PolicyTotals {
+        var latencies: [Double] = []
+        var committedBeforeFinal = 0
+        var disagreeing = 0
+        var editsVsFinal = 0
+        var finalWords = 0
+        var editsVsRef = 0
+        var finalEditsVsRef = 0
+        var refWords = 0
+        var stopMs: [Double] = []
+    }
+
+    private static func percentile(_ values: [Double], _ p: Double) -> Double {
+        guard !values.isEmpty else { return .nan }
+        let sorted = values.sorted()
+        return sorted[min(sorted.count - 1, max(0, Int((p * Double(sorted.count)).rounded(.up)) - 1))]
+    }
+
+    /// Feeds each clip at recording pace into a session with partial passes on the open
+    /// segment (`--interval`, 0 = none, today's behaviour), records every Audar run with its
+    /// time and audio window, then replays the commit policies (LA2, HOLD-1, HOLD-2) on the
+    /// same hypotheses, plus FINAL (every word typed when its segment's final pass ends, as
+    /// before streaming). Per word: commit time minus the end of the first audio window it
+    /// appeared in (with `--interval 0` that window is the whole segment, so FINAL there
+    /// understates latency: compare FINAL rows of a streaming run instead). TSV on stdout, one row per clip and policy, then totals. Files starting with
+    /// "00_" are warm-up. Language Arabic, formatting on; settings restored on exit.
+    private static func runStreamingSelfTest(_ arguments: [String]) -> Never {
+        Task { @MainActor in
+            let log = { (line: String) in FileHandle.standardError.write(Data("[streaming] \(line)\n".utf8)) }
+            let settingsService = SettingsService.shared
+            let originalSettings = settingsService.settings
+            let option = { (name: String) -> String? in
+                guard let index = arguments.firstIndex(of: name), index + 1 < arguments.count else { return nil }
+                return arguments[index + 1]
+            }
+            var paths: [String] = []
+            if let flag = arguments.firstIndex(of: "--streaming-selftest") {
+                var index = flag + 1
+                while index < arguments.count, !arguments[index].hasPrefix("--") { paths.append(arguments[index]); index += 1 }
+            }
+            let interval = option("--interval").flatMap(Double.init) ?? 0.5
+            var streaming = StreamingConfig()
+            streaming.partialInterval = interval
+            if let value = option("--max-partial-ms").flatMap(Double.init) { streaming.maxPartialMs = value }
+            if let value = option("--min-partial").flatMap(Double.init) { streaming.minPartialSeconds = value }
+            var segmenterConfig = SpeechSegmenter.Config()
+            if let value = option("--max-segment").flatMap(Double.init) { segmenterConfig.maxSegmentSeconds = value }
+            if let value = option("--relax-after").flatMap(Double.init) { segmenterConfig.relaxAfterSeconds = value }
+            var refs: [String: String] = [:]
+            if let path = option("--refs"), let data = FileManager.default.contents(atPath: path),
+               let entries = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+                for entry in entries {
+                    if let file = entry["file"] as? String, let ref = entry["ref"] as? String { refs[file] = ref }
+                }
+            }
+            let policies: [(name: String, policy: StreamingCommitter.Policy?)] = interval > 0
+                ? [("LA2", .localAgreement), ("HOLD1", .hold(1)), ("HOLD2", .hold(2)), ("FINAL", nil)]
+                : [("FINAL", nil)]
+            var totals: [String: PolicyTotals] = [:]
+            var partialMs: [Double] = []
+            var finalMs: [Double] = []
+
+            do {
+                settingsService.settings.language = .arabic
+                settingsService.settings.formatTextEnabled = true
+                settingsService.settings.audarEnabled = true
+                if !settingsService.settings.audarLicenseAccepted {
+                    settingsService.settings.audarLicenseAcceptedAt = Date()
+                }
+                let whisper = ModelManager.shared
+                let audar = AudarModelManager.shared
+                guard audar.isModelDownloaded else { throw TranscriptionError.modelNotReady }
+                if whisper.isModelDownloaded { try await whisper.loadModel() }
+                try await PunctuationModelManager.shared.loadModel()
+                try await audar.loadModel()
+                log("engines loaded, audar usable=\(audar.isUsable) interval=\(interval) min_partial=\(streaming.minPartialSeconds) max_partial_ms=\(streaming.maxPartialMs) max_segment=\(segmenterConfig.maxSegmentSeconds) relax_after=\(segmenterConfig.relaxAfterSeconds) refs=\(refs.count)")
+
+                var urls: [URL] = []
+                for path in paths {
+                    var isDirectory: ObjCBool = false
+                    FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
+                    if isDirectory.boolValue {
+                        urls += try FileManager.default.contentsOfDirectory(atPath: path)
+                            .filter { $0.hasSuffix(".wav") || $0.hasSuffix(".m4a") }.sorted()
+                            .map { URL(fileURLWithPath: path).appendingPathComponent($0) }
+                    } else {
+                        urls.append(URL(fileURLWithPath: path))
+                    }
+                }
+
+                let filter = TranscriptionService()
+                let cleanup = settingsService.settings.cleanupEnabled
+                let words = { (text: String) in IncrementalTranscriber.hypothesisWords(text, filter: filter, cleanup: cleanup) }
+                let f0 = { (value: Double) in value.isNaN ? "-" : String(format: "%.0f", value) }
+                let f2 = { (value: Double) in value.isNaN ? "-" : String(format: "%.2f", value) }
+                let pct = { (part: Int, whole: Int) in whole == 0 ? "-" : String(format: "%.1f", 100 * Double(part) / Double(whole)) }
+                print(["policy", "file", "words", "lat_med_s", "lat_p90_s", "disagree_pct", "wer_vs_final_pct", "wer_vs_ref_pct",
+                       "final_wer_vs_ref_pct", "partials", "partial_med_ms", "partial_p90_ms", "partial_max_ms",
+                       "final_med_ms", "final_max_ms", "stop_to_last_ms"].joined(separator: "\t"))
+
+                for url in urls {
+                    let file = url.lastPathComponent
+                    let samples = try await AudioConverter.convertToWhisperSamples(url: url)
+                    let seconds = Double(samples.count) / AudioConverter.targetSampleRate
+                    var continuation: AsyncStream<[Float]>.Continuation!
+                    let stream = AsyncStream<[Float]> { continuation = $0 }
+                    guard let session = IncrementalTranscriber.makeIfApplicable(
+                        stream: stream, config: segmenterConfig, streaming: interval > 0 ? streaming : nil
+                    ) else {
+                        log("\(file): incremental path not applicable")
+                        continue
+                    }
+                    let hypotheses = HypothesisLog()
+                    await session.observeHypotheses { hypotheses.append($0) }
+                    await session.start()
+                    let feedStart = LatencyLog.now()
+                    _ = try await feed(url, into: continuation, fast: false)
+                    continuation.finish()
+                    let stopAt = LatencyLog.now()
+                    let outcome = await session.finish(recordedDuration: seconds)
+                    let finishMs = LatencyLog.ms(since: stopAt)
+                    if case .fallback(let reason) = outcome { log("\(file): fallback (\(reason))") }
+
+                    let records = hypotheses.records
+                    let at = { (time: UInt64) in Double(time &- feedStart) / 1_000_000_000 }
+                    let segments = Set(records.map(\.segment)).sorted()
+                    let clipPartialMs = records.filter { !$0.isFinal }.map(\.ms)
+                    let clipFinalMs = records.filter(\.isFinal).map(\.ms)
+                    let lastFinish = records.filter(\.isFinal).map(\.finishedAt).max() ?? stopAt
+                    let stopToLast = lastFinish > stopAt ? Double(lastFinish - stopAt) / 1_000_000 : 0
+                    log("\(file) \(String(format: "%.1f", seconds))s: finish \(f0(finishMs))ms, segments \(segments.count): " + segments.map { index -> String in
+                        let runs = records.filter { $0.segment == index }
+                        let final = runs.first(where: \.isFinal)
+                        return "#\(index) \(runs.count - (final == nil ? 0 : 1))p final \(final.map { f0($0.ms) } ?? "-")ms partial max \(f0(runs.filter { !$0.isFinal }.map(\.ms).max() ?? .nan))"
+                    }.joined(separator: " | "))
+                    let warmup = file.hasPrefix("00_")
+                    if !warmup { partialMs += clipPartialMs; finalMs += clipFinalMs }
+
+                    for (name, policy) in policies {
+                        var latencies: [Double] = []
+                        var typedAll: [String] = []
+                        var finalAll: [String] = []
+                        var committedBeforeFinal = 0
+                        var disagreeing = 0
+                        for index in segments {
+                            let runs = records.filter { $0.segment == index }.sorted { $0.finishedAt < $1.finishedAt }
+                            guard let final = runs.first(where: \.isFinal) else { continue }
+                            var committer = StreamingCommitter(policy: policy ?? .localAgreement)
+                            var commitTimes: [Double] = []
+                            var committingWindow: [Double] = []
+                            if policy != nil {
+                                for run in runs where !run.isFinal && run.segmentOpen {
+                                    let hypothesis = words(run.text)
+                                    let update = committer.update(hypothesis.words, acceptable: hypothesis.acceptable)
+                                    commitTimes += Array(repeating: at(run.finishedAt), count: update.words.count)
+                                    committingWindow += Array(repeating: run.windowEnd, count: update.words.count)
+                                }
+                            }
+                            let early = committer.committed
+                            let finalHypothesis = words(final.text)
+                            let finalWords = finalHypothesis.acceptable ? finalHypothesis.words : []
+                            let rest = finalHypothesis.acceptable ? committer.finish(finalWords) : []
+                            commitTimes += Array(repeating: at(final.finishedAt), count: rest.count)
+                            committingWindow += Array(repeating: final.windowEnd, count: rest.count)
+                            let typed = committer.committed
+                            committedBeforeFinal += early.count
+                            disagreeing += StreamingText.editDistance(early, Array(finalWords[..<StreamingText.alignEnd(early, in: finalWords)]))
+
+                            // End of a word = end of the first audio window it appeared in.
+                            var appeared = [Double?](repeating: nil, count: typed.count)
+                            for run in runs {
+                                let matched = StreamingText.matches(typed, words(run.text).words)
+                                for (i, match) in matched.enumerated() where appeared[i] == nil && match != nil {
+                                    appeared[i] = run.windowEnd
+                                }
+                            }
+                            for i in typed.indices {
+                                latencies.append(commitTimes[i] - (appeared[i] ?? committingWindow[i]))
+                            }
+                            typedAll += typed
+                            finalAll += finalWords
+                        }
+                        let refWords = refs[file].map(StreamingText.words) ?? []
+                        let editsVsFinal = StreamingText.editDistance(typedAll, finalAll)
+                        let editsVsRef = refWords.isEmpty ? 0 : StreamingText.editDistance(typedAll, refWords)
+                        let finalEditsVsRef = refWords.isEmpty ? 0 : StreamingText.editDistance(finalAll, refWords)
+                        print([name, file, String(typedAll.count), f2(percentile(latencies, 0.5)), f2(percentile(latencies, 0.9)),
+                               pct(disagreeing, committedBeforeFinal), pct(editsVsFinal, finalAll.count),
+                               refWords.isEmpty ? "-" : pct(editsVsRef, refWords.count),
+                               refWords.isEmpty ? "-" : pct(finalEditsVsRef, refWords.count),
+                               String(clipPartialMs.count), f0(percentile(clipPartialMs, 0.5)), f0(percentile(clipPartialMs, 0.9)),
+                               f0(clipPartialMs.max() ?? .nan), f0(percentile(clipFinalMs, 0.5)), f0(clipFinalMs.max() ?? .nan),
+                               f0(stopToLast)].joined(separator: "\t"))
+                        fflush(stdout)
+                        if name == policies.first?.name {
+                            log("\(file) \(name) typed: \(typedAll.joined(separator: " "))")
+                        }
+                        guard !warmup else { continue }
+                        var total = totals[name, default: PolicyTotals()]
+                        total.latencies += latencies
+                        total.committedBeforeFinal += committedBeforeFinal
+                        total.disagreeing += disagreeing
+                        total.editsVsFinal += editsVsFinal
+                        total.finalWords += finalAll.count
+                        if !refWords.isEmpty {
+                            total.editsVsRef += editsVsRef
+                            total.finalEditsVsRef += finalEditsVsRef
+                            total.refWords += refWords.count
+                        }
+                        total.stopMs.append(stopToLast)
+                        totals[name] = total
+                    }
+                }
+
+                for (name, _) in policies {
+                    guard let total = totals[name] else { continue }
+                    print([name, "TOTAL", String(total.latencies.count), f2(percentile(total.latencies, 0.5)), f2(percentile(total.latencies, 0.9)),
+                           pct(total.disagreeing, total.committedBeforeFinal), pct(total.editsVsFinal, total.finalWords),
+                           pct(total.editsVsRef, total.refWords), pct(total.finalEditsVsRef, total.refWords),
+                           String(partialMs.count), f0(percentile(partialMs, 0.5)), f0(percentile(partialMs, 0.9)),
+                           f0(partialMs.max() ?? .nan), f0(percentile(finalMs, 0.5)), f0(finalMs.max() ?? .nan),
+                           f0(percentile(total.stopMs, 0.5)) + "/" + f0(total.stopMs.max() ?? .nan)].joined(separator: "\t"))
+                }
+                log("committed before final: " + policies.map { "\($0.name) \(totals[$0.name]?.committedBeforeFinal ?? 0)/\(totals[$0.name]?.latencies.count ?? 0)" }.joined(separator: ", "))
+            } catch {
+                log("error: \(error.localizedDescription)")
+            }
+            settingsService.settings = originalSettings
+            AudarModelManager.shared.unloadModel() // llama.cpp asserts at exit if the engine is alive
+            fflush(stdout)
+            exit(0)
+        }
+        dispatchMain()
+    }
+
+    /// Feeds `url` into `continuation` the way the microphone tap does: the file at its own
+    /// rate and channel count, in 4096-frame buffers (~90 ms) through the tap's
+    /// StreamingResampler, at recording pace (`fast`: as fast as possible). Does not finish
+    /// the stream. Returns the samples sent.
+    private static func feed(_ url: URL, into continuation: AsyncStream<[Float]>.Continuation, fast: Bool) async throws -> [Float] {
+        let audioFile = try AVAudioFile(forReading: url)
+        let format = audioFile.processingFormat
+        let resampler = StreamingResampler()
+        var streamed: [Float] = []
+        var fedSeconds = 0.0
+        let feedStart = LatencyLog.now()
+        while audioFile.framePosition < audioFile.length {
+            guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4096) else { break }
+            try audioFile.read(into: buffer, frameCount: 4096)
+            guard buffer.frameLength > 0 else { break }
+            if let out = resampler.process(buffer), !out.isEmpty {
+                continuation.yield(out)
+                streamed += out
+            }
+            fedSeconds += Double(buffer.frameLength) / format.sampleRate
+            if fast {
+                await Task.yield()
+            } else {
+                let due = feedStart + UInt64(fedSeconds * 1_000_000_000)
+                let now = LatencyLog.now()
+                if due > now { try await Task.sleep(nanoseconds: due - now) }
+            }
+        }
+        let tail = resampler.flush()
+        if !tail.isEmpty { continuation.yield(tail); streamed += tail }
+        return streamed
+    }
+
+    /// The text `LiveTypingRun` would type for `events` (same steps and punctuation model,
+    /// no keyboard events).
+    @MainActor
+    private static func typeOffline(_ events: [LiveEvent]) async -> String {
+        let formatting = SettingsService.shared.settings.formatTextEnabled
+        var segment = StreamingSegmentTyping()
+        var text = ""
+        for event in events {
+            let new: [String], lookahead: [String], isEnd: Bool
+            switch event {
+            case .words(let words, let rest):
+                new = LiveTypingRun.prepare(words, formatting: formatting)
+                lookahead = LiveTypingRun.prepare(rest, formatting: formatting)
+                isEnd = false
+                if new.isEmpty { continue }
+            case .segmentEnd(let words):
+                new = LiveTypingRun.prepare(words, formatting: formatting)
+                lookahead = []
+                isEnd = true
+                if new.isEmpty && segment.typed.isEmpty { continue }
+            }
+            let formatted = formatting ? await LiveTypingRun.punctuate(segment.modelInput(new: new, lookahead: lookahead)) : nil
+            text += LiveTyping.part(after: text, segment.step(new: new, lookahead: lookahead, formatted: formatted, isEnd: isEnd))
+            if isEnd { segment = StreamingSegmentTyping() }
+        }
+        return text
     }
 
     /// Input → expected final text. Expected text is compared word by word, case-sensitive,
@@ -592,7 +886,8 @@ enum PunctuationSelfTest {
         dispatchMain()
     }
 
-    /// Checks the pure parts of live typing (LiveTyping chunking/joining, LiveSegmentGate),
+    /// Checks the pure parts of live typing (LiveTyping chunking/joining, LiveSegmentGate,
+    /// streaming commit policies, reconciliation with the final text, deferred punctuation),
     /// prints PASS/FAIL per case and exits 1 if any case fails. Posts no keyboard events.
     private static func runLiveTypingSelfTest() -> Never {
         var failures = 0
@@ -694,49 +989,195 @@ enum PunctuationSelfTest {
         check("join: typed + pending == full text", full == LiveTyping.join(parts) && full == "أول جملة. ثاني جملة ثالث\nرابع." && pending == " ثالث\nرابع.",
               "\(full.debugDescription) / \(pending.debugDescription)")
 
-        // (c) Session gating: released in segment order, held until settled, blanks skipped,
-        // nothing after close.
+        // (c) Session gating: released in segment order, held until settled, nothing after close.
         do {
-            var gate = LiveSegmentGate(settled: true)
-            let released = gate.complete(0, text: "أ") + gate.complete(1, text: "  ") + gate.complete(2, text: " ب ")
-            check("gate: settled releases at once, skips blanks", released == ["أ", "ب"], "\(released)")
+            var gate = LiveSegmentGate<String>(settled: true)
+            let released = gate.complete(0, "أ") + gate.complete(1, nil) + gate.complete(2, "ب")
+            check("gate: settled releases at once", released == ["أ", "ب"] && gate.nextIndex == 3, "\(released)")
         }
         do {
-            var gate = LiveSegmentGate(settled: true)
-            let first = gate.complete(1, text: "ب")
-            let second = gate.complete(0, text: "أ")
+            var gate = LiveSegmentGate<String>(settled: true)
+            let first = gate.complete(1, "ب")
+            let second = gate.complete(0, "أ")
             check("gate: keeps segment order", first.isEmpty && second == ["أ", "ب"], "\(first) \(second)")
         }
         do {
-            var gate = LiveSegmentGate(settled: false)
-            let held = gate.complete(0, text: "أ") + gate.complete(1, text: "ب")
+            var gate = LiveSegmentGate<String>(settled: false)
+            let held = gate.complete(0, "أ") + gate.complete(1, "ب")
             let flushed = gate.settle()
-            let after = gate.complete(2, text: "ج")
+            let after = gate.complete(2, "ج")
             let again = gate.settle()
             check("gate: holds until settled, then flushes in order",
                   held.isEmpty && flushed == ["أ", "ب"] && after == ["ج"] && again.isEmpty,
                   "\(held) \(flushed) \(after) \(again)")
         }
         do {
-            var gate = LiveSegmentGate(settled: false)
-            _ = gate.complete(0, text: "أ")
-            _ = gate.complete(2, text: "ج")
+            var gate = LiveSegmentGate<String>(settled: false)
+            _ = gate.complete(0, "أ")
+            _ = gate.complete(2, "ج")
             let flushed = gate.settle()
-            let rest = gate.complete(1, text: "ب")
+            let rest = gate.complete(1, "ب")
             check("gate: flush stops at a gap until it fills", flushed == ["أ"] && rest == ["ب", "ج"], "\(flushed) \(rest)")
         }
         do {
-            var gate = LiveSegmentGate(settled: false)
-            _ = gate.complete(0, text: "أ")
+            var gate = LiveSegmentGate<String>(settled: false)
+            _ = gate.complete(0, "أ")
             gate.close()
-            let afterClose = gate.settle() + gate.complete(1, text: "ب")
+            let afterClose = gate.settle() + gate.complete(1, "ب") + gate.add(2, "ج")
             check("gate: abandoned before settling releases nothing", afterClose.isEmpty && gate.isClosed, "\(afterClose)")
         }
         do {
-            var gate = LiveSegmentGate(settled: true)
-            let released = gate.complete(0, text: nil) + gate.complete(1, text: "ب")
+            var gate = LiveSegmentGate<String>(settled: true)
+            let released = gate.complete(0, nil) + gate.complete(1, "ب")
             check("gate: a segment without text does not block the next", released == ["ب"] && gate.nextIndex == 2, "\(released)")
         }
+        do {
+            // Words of the open segment flow at once, after the earlier segment's end.
+            var gate = LiveSegmentGate<String>(settled: true)
+            let early = gate.add(1, "w1")
+            let end0 = gate.complete(0, "end0")
+            let more = gate.add(1, "w2")
+            let end1 = gate.complete(1, "end1")
+            let late = gate.add(1, "stale")
+            check("gate: open-segment items in order, nothing after its end",
+                  early.isEmpty && end0 == ["end0", "w1"] && more == ["w2"] && end1 == ["end1"] && late.isEmpty,
+                  "\(early) \(end0) \(more) \(end1) \(late)")
+        }
+        do {
+            // Auto mode: streamed words are held with everything else, then flushed in order.
+            var gate = LiveSegmentGate<String>(settled: false)
+            let held = gate.complete(0, "end0") + gate.add(1, "w1") + gate.add(1, "w2")
+            let flushed = gate.settle()
+            check("gate: streamed words held until settled", held.isEmpty && flushed == ["end0", "w1", "w2"], "\(held) \(flushed)")
+        }
+
+        // (d) Word keys and alignment.
+        let w = { (text: String) in text.split(separator: " ").map(String.init) }
+        check("key: hamza, ta marbuta, alef maqsura, tashkeel, brackets, case",
+              StreamingText.key("أَحْمَدُ،") == "احمد" && StreamingText.key("مدرسة") == "مدرسه"
+                && StreamingText.key("على") == "علي" && StreamingText.key("[CRM]") == "crm" && StreamingText.key("؟") == "",
+              [StreamingText.key("أَحْمَدُ،"), StreamingText.key("مدرسة"), StreamingText.key("[CRM]")].joined(separator: "|"))
+        check("words: punctuation-only tokens dropped", StreamingText.words("طيب ، تمام ؟") == ["طيب", "تمام"])
+        check("align: exact prefix", StreamingText.alignEnd(w("انا رايح"), in: w("انا رايح على البيت")) == 2)
+        check("align: nothing committed", StreamingText.alignEnd([], in: w("انا رايح")) == 0)
+        check("align: spelling variants match", StreamingText.alignEnd(w("أنا رايحة"), in: w("انا رايحه على")) == 2)
+        check("align: substituted word", StreamingText.alignEnd(w("انا رايح"), in: w("انا راجع على البيت")) == 2)
+        check("align: hypothesis inserted a word", StreamingText.alignEnd(w("انا رايح"), in: w("انا هلا رايح على")) == 3)
+        check("align: hypothesis dropped a committed word", StreamingText.alignEnd(w("انا رايح على"), in: w("انا على البيت")) == 2)
+        check("align: hypothesis shorter than committed", StreamingText.alignEnd(w("انا رايح على"), in: w("انا رايح")) == 2)
+
+        // (e) Commit policies: never retract, LA2 needs two agreeing hypotheses, HOLD-N keeps N back.
+        do {
+            var la2 = StreamingCommitter(policy: .localAgreement)
+            let a = la2.update(w("انا رايح"), acceptable: true)
+            let b = la2.update(w("انا رايح على"), acceptable: true)
+            let c = la2.update(w("انا رايح على البيت"), acceptable: true)
+            let d = la2.update(w("انا رايح على البيت بكرة"), acceptable: true)
+            check("LA2: commits the agreed prefix only",
+                  a.words.isEmpty && b.words == w("انا رايح") && b.lookahead == w("على")
+                    && c.words == w("على") && d.words == w("البيت") && la2.committed == w("انا رايح على البيت"),
+                  "\(a) \(b) \(c) \(d)")
+        }
+        do {
+            var la2 = StreamingCommitter(policy: .localAgreement)
+            _ = la2.update(w("انا رايح على"), acceptable: true)
+            let changed = la2.update(w("انا راجع من"), acceptable: true)
+            let agreed = la2.update(w("انا راجع من الشغل"), acceptable: true)
+            check("LA2: a changed word waits for agreement",
+                  changed.words == w("انا") && agreed.words == w("راجع من"), "\(changed) \(agreed)")
+        }
+        do {
+            var hold = StreamingCommitter(policy: .hold(1))
+            let a = hold.update(w("انا رايح على"), acceptable: true)
+            let b = hold.update(w("انا رايح على البيت"), acceptable: true)
+            let c = hold.update(w("انا راجع"), acceptable: true)   // shorter, diverged: nothing new
+            check("HOLD-1: all but the last word, never retracts",
+                  a.words == w("انا رايح") && a.lookahead == w("على") && b.words == w("على")
+                    && c.words.isEmpty && hold.committed == w("انا رايح على"),
+                  "\(a) \(b) \(c) \(hold.committed)")
+        }
+        do {
+            var hold = StreamingCommitter(policy: .hold(2))
+            let a = hold.update(w("انا رايح على البيت"), acceptable: true)
+            check("HOLD-2: all but the last two words", a.words == w("انا رايح") && a.lookahead == w("على البيت"), "\(a)")
+        }
+        do {
+            var hold = StreamingCommitter(policy: .hold(1))
+            let one = hold.update(w("شكرا"), acceptable: true)
+            let junk = hold.update([], acceptable: false)
+            let two = hold.update(w("شكرا جزيلا لك"), acceptable: true)
+            check("gate: nothing before a 2-word non-hallucination hypothesis",
+                  one.words.isEmpty && junk.words.isEmpty && !two.words.isEmpty && two.words == w("شكرا جزيلا"),
+                  "\(one) \(junk) \(two)")
+        }
+        do {
+            var hold = StreamingCommitter(policy: .hold(1))
+            _ = hold.update(w("انا رايح على البيت"), acceptable: true)
+            let bad = hold.update(w("موسيقى موسيقى موسيقى"), acceptable: false)
+            check("hallucinated hypothesis commits nothing", bad.words.isEmpty && hold.committed == w("انا رايح على"), "\(bad)")
+        }
+
+        // (f) Reconciliation with the final text: only what follows the committed words.
+        do {
+            var committer = StreamingCommitter(policy: .hold(1))
+            _ = committer.update(w("انا رايح على البيت"), acceptable: true)
+            let rest = committer.finish(w("انا رايح على البيت بكرة الصبح"))
+            check("final: remainder after the committed words", rest == w("البيت بكرة الصبح"), "\(rest)")
+        }
+        do {
+            var committer = StreamingCommitter(policy: .hold(1))
+            _ = committer.update(w("انا رايح على البيت"), acceptable: true)
+            let rest = committer.finish(w("انا راجع من البيت بكرة"))
+            check("final: diverged words stay, the rest follows the best alignment",
+                  rest == w("البيت بكرة") && committer.committed == w("انا رايح على البيت بكرة"), "\(rest)")
+        }
+        do {
+            var committer = StreamingCommitter(policy: .hold(1))
+            _ = committer.update(w("انا رايح على البيت"), acceptable: true)
+            let rest = committer.finish(w("انا رايح"))
+            check("final: shorter than committed adds nothing", rest.isEmpty, "\(rest)")
+        }
+        do {
+            var committer = StreamingCommitter(policy: .localAgreement)
+            let rest = committer.finish(w("كل الكلام"))
+            check("final: nothing committed types the whole final", rest == w("كل الكلام"), "\(rest)")
+        }
+
+        // (g) Punctuation while streaming: after a word only once the next one is typed.
+        do {
+            var segment = StreamingSegmentTyping()
+            let first = segment.step(new: w("مرحبا كيف"), lookahead: w("حالك"), formatted: "مرحبا، كيف حالك؟", isEnd: false)
+            let second = segment.step(new: w("حالك"), lookahead: [], formatted: "مرحبا، كيف حالك؟", isEnd: false)
+            let end = segment.step(new: [], lookahead: [], formatted: "مرحبا، كيف حالك؟", isEnd: true)
+            var typed = ""
+            for step in [first, second, end] { typed += LiveTyping.part(after: typed, step) }
+            check("punctuation: deferred to the next word, final mark at the end",
+                  first == .init(punctuation: "", text: "مرحبا، كيف") && second == .init(punctuation: "", text: "حالك")
+                    && end == .init(punctuation: "؟", text: "") && typed == "مرحبا، كيف حالك؟",
+                  "\(first) \(second) \(end) \(typed.debugDescription)")
+        }
+        do {
+            var segment = StreamingSegmentTyping()
+            let first = segment.step(new: w("i think"), lookahead: w("so"), formatted: "I think so.", isEnd: false)
+            let end = segment.step(new: w("so"), lookahead: [], formatted: "I think. So.", isEnd: true)
+            check("punctuation: model casing for new words, mark before the next word",
+                  first.text == "I think" && end == .init(punctuation: ".", text: "So."), "\(first) \(end)")
+        }
+        do {
+            var segment = StreamingSegmentTyping()
+            let step = segment.step(new: w("واحد اثنين"), lookahead: [], formatted: "واحد اثنين ثلاثة", isEnd: false)
+            check("punctuation: misaligned model output adds none", step == .init(punctuation: "", text: "واحد اثنين"), "\(step)")
+        }
+        do {
+            var segment = StreamingSegmentTyping()
+            let step = segment.step(new: w("بدون نموذج"), lookahead: [], formatted: nil, isEnd: true)
+            check("punctuation: no model, words as they are", step == .init(punctuation: "", text: "بدون نموذج"), "\(step)")
+        }
+        check("part: space between segments, none before punctuation",
+              LiveTyping.part(after: "أول.", .init(punctuation: "", text: "ثاني")) == " ثاني"
+                && LiveTyping.part(after: "كلمة", .init(punctuation: "،", text: "تالية")) == "، تالية"
+                && LiveTyping.part(after: "كلمة", .init(punctuation: "؟", text: "")) == "؟"
+                && LiveTyping.part(after: "", .init(punctuation: "", text: "بداية")) == "بداية")
 
         print("\(total - failures)/\(total) passed")
         fflush(stdout)
