@@ -66,7 +66,12 @@ class TranscriptionService {
     /// Auto mode with Audar available: Whisper's detection goes to Audar when it reports
     /// Arabic (or a language Whisper confuses with Arabic dialects) or is unsure.
     static func routesToAudar(language: String, confidence: Float) -> Bool {
-        arabicLikeLanguages.contains(language) || confidence < minimumDetectionConfidence
+        isArabicLike(language) || confidence < minimumDetectionConfidence
+    }
+
+    /// Arabic, or a language Whisper confuses with Arabic dialects.
+    static func isArabicLike(_ language: String) -> Bool {
+        arabicLikeLanguages.contains(language)
     }
 
     // Known Whisper hallucination phrases (lowercased, without brackets for comparison)

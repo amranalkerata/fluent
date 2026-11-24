@@ -64,6 +64,10 @@ final class AudarEngine: @unchecked Sendable {
 
         var modelParams = llama_model_default_params()
         modelParams.n_gpu_layers = -1 // every layer on Metal
+        // Read the weights into memory instead of mapping the file. Mapped weights are clean
+        // file pages that macOS drops within a minute under memory pressure, and the next run
+        // then pages 2 GB back in from disk (a 1 s partial pass took 4.4 s in real use).
+        modelParams.load_mode = LLAMA_LOAD_MODE_NONE
         guard let model = llama_model_load_from_file(modelPath, modelParams) else {
             throw AudarEngineError.modelLoadFailed(modelPath)
         }

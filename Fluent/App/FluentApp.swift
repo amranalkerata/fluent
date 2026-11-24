@@ -129,6 +129,13 @@ enum PunctuationSelfTest {
             //          [--max-partial-ms 1500] [--min-partial 1.0] [--max-segment 25] [--relax-after 8]
             runStreamingSelfTest(arguments)
         }
+        if arguments.contains("--detect-prefix-selftest") {
+            // Whisper language detection at the in-recording trigger points: for every clip and
+            // speech threshold, detects on the audio up to where the segmenter has heard that much
+            // speech, and says what the recording would do (settle on Audar, hold, abandon):
+            //   Fluent --detect-prefix-selftest clip.wav|dir [...] [--speech 1,1.5,2,3]
+            runDetectPrefixSelfTest(arguments)
+        }
         if arguments.contains("--live-typing-selftest") {
             // Live typing rules without posting any keyboard event: chunking, spacing between
             // typed segments, and the session's hold-until-settled ordering:
@@ -517,6 +524,93 @@ enum PunctuationSelfTest {
     /// appeared in (with `--interval 0` that window is the whole segment, so FINAL there
     /// understates latency: compare FINAL rows of a streaming run instead). TSV on stdout, one row per clip and policy, then totals. Files starting with
     /// "00_" are warm-up. Language Arabic, formatting on; settings restored on exit.
+    private static func runDetectPrefixSelfTest(_ arguments: [String]) -> Never {
+        Task { @MainActor in
+            let log = { (line: String) in FileHandle.standardError.write(Data("[detect] \(line)\n".utf8)) }
+            let option = { (name: String) -> String? in
+                guard let index = arguments.firstIndex(of: name), index + 1 < arguments.count else { return nil }
+                return arguments[index + 1]
+            }
+            var paths: [String] = []
+            if let flag = arguments.firstIndex(of: "--detect-prefix-selftest") {
+                var index = flag + 1
+                while index < arguments.count, !arguments[index].hasPrefix("--") { paths.append(arguments[index]); index += 1 }
+            }
+            let thresholds = (option("--speech") ?? "1,1.5,2,3").split(separator: ",").compactMap { Double($0) }
+            do {
+                let whisper = ModelManager.shared
+                guard whisper.isModelDownloaded else { throw TranscriptionError.modelNotReady }
+                try await whisper.loadModel()
+                var urls: [URL] = []
+                for path in paths {
+                    var isDirectory: ObjCBool = false
+                    FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
+                    if isDirectory.boolValue {
+                        urls += try FileManager.default.contentsOfDirectory(atPath: path)
+                            .filter { $0.hasSuffix(".wav") || $0.hasSuffix(".m4a") }.sorted()
+                            .map { URL(fileURLWithPath: path).appendingPathComponent($0) }
+                    } else {
+                        urls.append(URL(fileURLWithPath: path))
+                    }
+                }
+                var outcomes: [Double: [String: Int]] = [:]
+                var times: [Double: [Double]] = [:]
+                var warmed = false
+                print(["file", "speech_s", "wall_s", "lang", "conf", "ms", "outcome"].joined(separator: "\t"))
+                for url in urls {
+                    let samples = try await AudioConverter.convertToWhisperSamples(url: url)
+                    if !warmed {
+                        _ = try? await whisper.detectLanguage(samples: Array(samples.prefix(32_000)))
+                        warmed = true
+                    }
+                    // Where the segmenter has heard each threshold of speech, fed in 100 ms steps.
+                    var segmenter = SpeechSegmenter()
+                    var heard: [Float] = []
+                    var cut: [Double: Int] = [:]
+                    var fed = 0
+                    while fed < samples.count, cut.count < thresholds.count {
+                        let next = min(fed + 1_600, samples.count)
+                        heard.append(contentsOf: samples[fed..<next])
+                        fed = next
+                        _ = segmenter.advance(heard)
+                        for threshold in thresholds where cut[threshold] == nil && segmenter.totalSpeechSeconds >= threshold {
+                            cut[threshold] = fed
+                        }
+                    }
+                    for threshold in thresholds {
+                        guard let end = cut[threshold] else {
+                            print([url.lastPathComponent, "\(threshold)", "-", "-", "-", "-", "not_reached"].joined(separator: "\t"))
+                            continue
+                        }
+                        let start = LatencyLog.now()
+                        let result = try await whisper.detectLanguage(samples: Array(samples.prefix(min(end, 30 * 16_000))))
+                        let ms = LatencyLog.ms(since: start)
+                        // The in-recording rule of IncrementalTranscriber.recordDetection (first run).
+                        let arabic = TranscriptionService.isArabicLike(result.language)
+                        let outcome = !arabic && result.confidence >= IncrementalTranscriber.abandonConfidence
+                            ? "abandon"
+                            : (arabic && result.confidence >= TranscriptionService.minimumDetectionConfidence ? "settle" : "hold")
+                        outcomes[threshold, default: [:]][outcome, default: 0] += 1
+                        times[threshold, default: []].append(ms)
+                        print([url.lastPathComponent, "\(threshold)", String(format: "%.2f", Double(end) / 16_000),
+                               result.language, String(format: "%.2f", result.confidence), String(format: "%.0f", ms),
+                               outcome].joined(separator: "\t"))
+                    }
+                }
+                for threshold in thresholds {
+                    let sorted = (times[threshold] ?? []).sorted()
+                    let median = sorted.isEmpty ? 0 : sorted[sorted.count / 2]
+                    log("speech \(threshold)s: \(outcomes[threshold] ?? [:]) median \(String(format: "%.0f", median)) ms")
+                }
+            } catch {
+                log("error: \(error.localizedDescription)")
+            }
+            fflush(stdout)
+            exit(0)
+        }
+        dispatchMain()
+    }
+
     private static func runStreamingSelfTest(_ arguments: [String]) -> Never {
         Task { @MainActor in
             let log = { (line: String) in FileHandle.standardError.write(Data("[streaming] \(line)\n".utf8)) }

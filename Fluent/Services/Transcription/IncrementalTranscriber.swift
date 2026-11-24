@@ -249,8 +249,9 @@ struct StreamingConfig {
     var partialInterval = 0.5
     /// First partial pass of a segment once it holds this much audio.
     var minPartialSeconds = 1.0
-    /// A partial pass slower than this (a long segment) ends partial passes for that segment;
-    /// its words are then typed when it closes, as without streaming.
+    /// Two partial passes in a row slower than this (a long segment) end partial passes for
+    /// that segment; its words are then typed when it closes, as without streaming. One slow
+    /// pass alone (the GPU busy with language detection, a cold start) does not.
     var maxPartialMs = 1500.0
 }
 
@@ -303,9 +304,16 @@ actor IncrementalTranscriber {
     }
 
     /// Whisper detection starts after this much speech, and once more after the second
-    /// threshold when the first answer had low confidence.
-    private static let detectionSpeechSeconds = 3.0
-    private static let redetectionSpeechSeconds = 8.0
+    /// threshold when the first answer settled nothing. Live typing waits for the language, so
+    /// the first detection is early. Measured with `--detect-prefix-selftest` (17 Arabic dialect
+    /// clips, 6 English): after 1 s of speech English came back ≥ 0.98 sure every time, while
+    /// Arabic misread as another language never passed 0.77 (one of the user's own clips read
+    /// as English at 0.62, above `minimumDetectionConfidence`).
+    private static let detectionSpeechSeconds = 1.0
+    private static let redetectionSpeechSeconds = 2.5
+    /// A detection takes the recording away from Audar only when it is this sure the speech is
+    /// another language.
+    static let abandonConfidence: Float = 0.9
     /// Whisper reads at most the first 30 s.
     private static let detectionMaxSamples = 30 * SpeechSegmenter.sampleRate
     /// The punctuation model's first prediction after ~30-60 s idle takes ~0.8 s instead of
@@ -352,8 +360,10 @@ actor IncrementalTranscriber {
     private var closedCommitters: [Int: StreamingCommitter] = [:]
     /// Sample count read by the open segment's last partial pass.
     private var lastPartialEnd: Int?
-    /// A partial pass of the open segment was too slow: no more for it.
+    /// Partial passes of the open segment were too slow: no more for it.
     private var partialsStopped = false
+    /// Slow partial passes in a row on the open segment.
+    private var slowPartials = 0
     /// Hallucination filter, the same one the stop path uses.
     private let filter = TranscriptionService()
 
@@ -493,6 +503,7 @@ actor IncrementalTranscriber {
         openCommitter = StreamingCommitter(policy: openCommitter.policy)
         lastPartialEnd = nil
         partialsStopped = false
+        slowPartials = 0
 
         let audio = Array(samples[range])
         let windowEnd = Double(range.upperBound) / Double(SpeechSegmenter.sampleRate)
@@ -594,7 +605,10 @@ actor IncrementalTranscriber {
         #endif
         // Only while the segment is still open: once it closed, its final pass decides.
         if index == queued, abandoned == nil, failure == nil {
-            if let streaming, ms > streaming.maxPartialMs { partialsStopped = true }
+            if let streaming {
+                slowPartials = ms > streaming.maxPartialMs ? slowPartials + 1 : 0
+                if slowPartials >= 2 { partialsStopped = true }
+            }
             if let text {
                 let hypothesis = hypothesisWords(text)
                 let update = openCommitter.update(hypothesis.words, acceptable: hypothesis.acceptable)
@@ -616,7 +630,7 @@ actor IncrementalTranscriber {
         switch detectionRuns {
         case 0 where speech >= Self.detectionSpeechSeconds:
             break
-        case 1 where speech >= Self.redetectionSpeechSeconds && (detection?.confidence ?? 0) < TranscriptionService.minimumDetectionConfidence:
+        case 1 where speech >= Self.redetectionSpeechSeconds && !liveGate.isSettled:
             break
         default:
             return
@@ -649,9 +663,10 @@ actor IncrementalTranscriber {
             return
         }
         detection = result
-        if !TranscriptionService.routesToAudar(language: result.language, confidence: result.confidence) {
+        let arabic = TranscriptionService.isArabicLike(result.language)
+        if !arabic && result.confidence >= Self.abandonConfidence {
             abandon("detected non-Arabic speech")
-        } else if result.confidence >= TranscriptionService.minimumDetectionConfidence || detectionRuns >= 2 {
+        } else if (arabic && result.confidence >= TranscriptionService.minimumDetectionConfidence) || detectionRuns >= 2 {
             // No later detection can run (see maybeDetectLanguage), so Audar keeps this recording.
             settleLanguage()
         }
