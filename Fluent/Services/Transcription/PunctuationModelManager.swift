@@ -181,10 +181,13 @@ final class PunctuationEngine: @unchecked Sendable {
     // MARK: - Formatting
 
     private struct Word {
+        /// Lower-cased input word (what the model sees).
         let text: String
+        /// Text emitted instead of rebuilding the word from pieces when `useOriginalText` is set.
+        let original: String
         var tokens: [Int]
-        /// Emit the input word as-is instead of rebuilding it from pieces
-        /// (unknown token or truncated word).
+        /// Emit `original` as-is instead of rebuilding it from pieces
+        /// (unknown token, truncated word, or a Latin word inside Arabic text).
         var useOriginalText: Bool
     }
 
@@ -197,9 +200,10 @@ final class PunctuationEngine: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
 
-        let cleaned = Self.stripTrailingSentencePunctuation(text).lowercased()
-        let wordTexts = cleaned.split(whereSeparator: { $0.isWhitespace }).map(String.init)
-        guard !wordTexts.isEmpty else { return text }
+        let stripped = Self.stripTrailingSentencePunctuation(text)
+        let cleaned = stripped.lowercased()
+        let originalTexts = stripped.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        guard !originalTexts.isEmpty else { return text }
 
         let options = Options(
             isSpanish: Self.isSpanish(cleaned),
@@ -207,9 +211,14 @@ final class PunctuationEngine: @unchecked Sendable {
         )
 
         var words: [Word] = []
-        for wordText in wordTexts {
+        for originalText in originalTexts {
+            let wordText = originalText.lowercased()
             var tokens = try tokenizer.encode(wordText)
             var useOriginal = tokens.contains(Self.unkId)
+            // In Arabic text, English words stay exactly as spoken: no re-casing, no acronym
+            // dots ("CRM" not "C.R.M."); only punctuation after them.
+            let keepLatin = options.isArabic && originalText.unicodeScalars.contains(where: Self.isLatinScalar)
+            if keepLatin { useOriginal = true }
             if tokens.count > Self.maxContentTokens {
                 tokens = Array(tokens.prefix(Self.maxContentTokens))
                 useOriginal = true
@@ -217,7 +226,9 @@ final class PunctuationEngine: @unchecked Sendable {
             if tokens.isEmpty {
                 useOriginal = true
             }
-            words.append(Word(text: wordText, tokens: tokens, useOriginalText: useOriginal))
+            // Outside Arabic text, unknown/truncated words keep today's lower-cased output.
+            words.append(Word(text: wordText, original: keepLatin ? originalText : wordText,
+                              tokens: tokens, useOriginalText: useOriginal))
         }
 
         // Split on word boundaries into chunks that fit the fixed model length.
@@ -294,9 +305,9 @@ final class PunctuationEngine: @unchecked Sendable {
             if !currentSentence.isEmpty { currentSentence += " " }
 
             if word.useOriginalText {
-                currentSentence += word.text
+                currentSentence += word.original
                 let postLabel = value(post, lastPosition)
-                if let label = postLabelText(postLabel, after: word.text, options: options) {
+                if let label = postLabelText(postLabel, after: word.original, options: options) {
                     currentSentence += label
                 }
                 if value(seg, lastPosition) == 1 && Self.endsSentence(currentSentence) {
@@ -364,7 +375,8 @@ final class PunctuationEngine: @unchecked Sendable {
             .filter { !$0.isEmpty }
             .enumerated()
             .map { index, sentence in
-                index == 0 && !capitalizeStart ? sentence : Self.capitalizingFirstLetter(sentence)
+                // Arabic has no case: capitalizing would only re-case an English word as spoken.
+                index == 0 && !capitalizeStart || options.isArabic ? sentence : Self.capitalizingFirstLetter(sentence)
             }
             .joined(separator: " ")
     }

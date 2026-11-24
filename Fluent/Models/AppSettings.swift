@@ -5,6 +5,8 @@ struct AppSettings: Codable, Equatable {
     var language: TranscriptionLanguage = .auto
     var formatTextEnabled: Bool = true
     var formatListsEnabled: Bool = true
+    /// Remove stutters, repeated words/phrases and hesitation sounds before formatting.
+    var cleanupEnabled: Bool = true
 
     // MARK: - Speech Engine Settings
     /// Send Arabic speech to the offline Audar model once it is downloaded.
@@ -125,7 +127,7 @@ struct AppSettings: Codable, Equatable {
 
 extension AppSettings {
     private enum CodingKeys: String, CodingKey {
-        case language, formatTextEnabled, formatListsEnabled
+        case language, formatTextEnabled, formatListsEnabled, cleanupEnabled
         case audarEnabled, audarLicenseAcceptedAt
         case autoPasteEnabled, showRecordingOverlay, launchAtLogin, removeFromDockOnClose
         case overlayPosition, audioQuality
@@ -139,6 +141,7 @@ extension AppSettings {
         language = try container.decodeIfPresent(TranscriptionLanguage.self, forKey: .language) ?? defaults.language
         formatTextEnabled = try container.decodeIfPresent(Bool.self, forKey: .formatTextEnabled) ?? defaults.formatTextEnabled
         formatListsEnabled = try container.decodeIfPresent(Bool.self, forKey: .formatListsEnabled) ?? defaults.formatListsEnabled
+        cleanupEnabled = try container.decodeIfPresent(Bool.self, forKey: .cleanupEnabled) ?? defaults.cleanupEnabled
         audarEnabled = try container.decodeIfPresent(Bool.self, forKey: .audarEnabled) ?? defaults.audarEnabled
         audarLicenseAcceptedAt = try container.decodeIfPresent(Date.self, forKey: .audarLicenseAcceptedAt)
         autoPasteEnabled = try container.decodeIfPresent(Bool.self, forKey: .autoPasteEnabled) ?? defaults.autoPasteEnabled

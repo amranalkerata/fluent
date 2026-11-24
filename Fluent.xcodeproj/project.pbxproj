@@ -66,6 +66,7 @@
 		060 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 160 /* Foundation.framework */; };
 		061 /* AudarEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 161 /* AudarEngine.swift */; };
 		064 /* IncrementalTranscriber.swift in Sources */ = {isa = PBXBuildFile; fileRef = 164 /* IncrementalTranscriber.swift */; };
+		065 /* SpeechCleanup.swift in Sources */ = {isa = PBXBuildFile; fileRef = 165 /* SpeechCleanup.swift */; };
 		062 /* AudarModelManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 162 /* AudarModelManager.swift */; };
 /* End PBXBuildFile section */
 
@@ -142,6 +143,7 @@
 		160 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = System/Library/Frameworks/Foundation.framework; sourceTree = SDKROOT; };
 		161 /* AudarEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudarEngine.swift; sourceTree = "<group>"; };
 		164 /* IncrementalTranscriber.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IncrementalTranscriber.swift; sourceTree = "<group>"; };
+		165 /* SpeechCleanup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechCleanup.swift; sourceTree = "<group>"; };
 		162 /* AudarModelManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudarModelManager.swift; sourceTree = "<group>"; };
 		900 /* Fluent.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Fluent.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -306,6 +308,7 @@
 				155 /* LlamaRuntime.swift */,
 				161 /* AudarEngine.swift */,
 				164 /* IncrementalTranscriber.swift */,
+				165 /* SpeechCleanup.swift */,
 				162 /* AudarModelManager.swift */,
 			);
 			path = Transcription;
@@ -534,6 +537,7 @@
 				055 /* LlamaRuntime.swift in Sources */,
 				061 /* AudarEngine.swift in Sources */,
 				064 /* IncrementalTranscriber.swift in Sources */,
+				065 /* SpeechCleanup.swift in Sources */,
 				062 /* AudarModelManager.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

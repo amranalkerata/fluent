@@ -70,8 +70,9 @@ class TranscriptionService {
     }
 
     // Known Whisper hallucination phrases (lowercased, without brackets for comparison)
-    // The isHallucination() method strips brackets/parentheses before comparing
-    private let hallucinationPhrases: Set<String> = [
+    // The isHallucination() method strips brackets/parentheses before comparing.
+    // Also the non-speech tags removed from brackets (see SpeechCleanup.unwrapBrackets).
+    static let hallucinationPhrases: Set<String> = [
         // YouTube-style phrases
         "thank you for watching",
         "thanks for watching",
@@ -163,9 +164,16 @@ class TranscriptionService {
 
     /// Check for excessive character repetition: "??????", "aaaaaaa"
     private func hasExcessiveRepetition(_ text: String) -> Bool {
-        // 4 or more consecutive identical characters
-        let pattern = "(.)\\1{3,}"
-        return text.range(of: pattern, options: .regularExpression) != nil
+        // Runs of 4+ identical characters ("??????", "aaaaaaa", "يااااا…") are a Whisper/Audar
+        // loop only when they make up most of the text. Real speech can contain them too —
+        // Arabic laughter "ههههه", a hesitation "مممم" before a sentence — and dropping the
+        // whole dictation for that loses the user's words.
+        guard let regex = try? NSRegularExpression(pattern: "(.)\\1{3,}") else { return false }
+        let nsText = text as NSString
+        let repeated = regex.matches(in: text, range: NSRange(location: 0, length: nsText.length))
+            .reduce(0) { $0 + $1.range.length }
+        let meaningful = text.unicodeScalars.filter { !CharacterSet.whitespacesAndNewlines.contains($0) }.count
+        return repeated > 0 && Double(repeated) >= 0.5 * Double(max(meaningful, 1))
     }
 
     /// Check if text is mostly question marks (Whisper hallucination on silence)
@@ -192,11 +200,17 @@ class TranscriptionService {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
         // 1. Reject if entire text is wrapped in brackets or parentheses
-        //    This catches ALL audio markers: [music], (click), [Light music], etc.
-        //    Pattern-based detection beats blocklists because Whisper generates endless variations
+        //    This catches audio markers: [music], (click), [Light music], (door closes), etc.
+        //    Pattern-based detection beats blocklists because Whisper generates endless variations.
+        //    Exception: a single bracketed word that is not a sound tag is speech (Audar writes
+        //    English words said in Arabic speech in brackets: "[CRM]").
         if (trimmed.hasPrefix("[") && trimmed.hasSuffix("]")) ||
            (trimmed.hasPrefix("(") && trimmed.hasSuffix(")")) {
-            return true
+            let inner = String(trimmed.dropFirst().dropLast())
+            let isSingleWord = !inner.contains(where: { $0.isWhitespace || "[]()".contains($0) })
+            if !isSingleWord || SpeechCleanup.isNonSpeechTag(inner, phrases: Self.hallucinationPhrases) {
+                return true
+            }
         }
 
         // 2. Reject very short text (likely not real speech)
@@ -233,36 +247,13 @@ class TranscriptionService {
             .replacingOccurrences(of: ")", with: "")
             .trimmingCharacters(in: .whitespaces)
 
-        return hallucinationPhrases.contains(normalized)
+        return Self.hallucinationPhrases.contains(normalized)
     }
 
-    /// Removes transcription artifacts like [inaudible], [BLANK_AUDIO], (click), etc.
-    /// These are Whisper-generated markers that shouldn't appear in the final output
+    /// Removes non-speech markers like [inaudible], [BLANK_AUDIO], (click), [ضحك], and
+    /// unwraps bracketed speech: Audar writes English words said in Arabic speech as "[CRM]".
     private func cleanTranscriptionArtifacts(_ text: String) -> String {
-        var cleaned = text
-
-        // Remove content in square brackets: [inaudible], [BLANK_AUDIO], [music], etc.
-        cleaned = cleaned.replacingOccurrences(
-            of: "\\[[^\\]]*\\]",
-            with: "",
-            options: .regularExpression
-        )
-
-        // Remove content in parentheses: (applause), (click), (inaudible), etc.
-        cleaned = cleaned.replacingOccurrences(
-            of: "\\([^)]*\\)",
-            with: "",
-            options: .regularExpression
-        )
-
-        // Clean up multiple spaces left behind
-        cleaned = cleaned.replacingOccurrences(
-            of: "\\s{2,}",
-            with: " ",
-            options: .regularExpression
-        )
-
-        return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+        SpeechCleanup.unwrapBrackets(text, nonSpeechPhrases: Self.hallucinationPhrases)
     }
 
     /// Streaming transcription - transcribes audio as it's being recorded
@@ -293,18 +284,8 @@ class TranscriptionService {
 
         let trimmedResult = result.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // Filter out hallucinations from final result
-        if isHallucination(trimmedResult) {
-            return ""
-        }
-
-        // Apply text formatting (punctuation + capitalization) if enabled
-        let formattedResult = await textFormattingService.format(text: trimmedResult)
-
-        // Remove any remaining transcription artifacts
-        let cleanedResult = cleanTranscriptionArtifacts(formattedResult)
-
-        return cleanedResult
+        // Same post-processing as a recorded file
+        return await postProcess(trimmedResult)
     }
 
     func transcribe(audioURL: URL) async throws -> String {
@@ -427,9 +408,11 @@ class TranscriptionService {
         return text
     }
 
-    /// Raw engine text to the text that gets pasted: hallucination filter, punctuation and
-    /// list formatting, artifact cleanup. Returns "" for a hallucination.
-    private func postProcess(_ raw: String) async -> String {
+    /// Raw engine text to the text that gets pasted: hallucination filter, bracket cleanup
+    /// (sound tags removed, bracketed speech kept), speech cleanup (stutters, repeats, filler
+    /// sounds), punctuation and list formatting. Returns "" for a hallucination.
+    /// Internal (not private) so the DEBUG self-test runs exactly this path.
+    func postProcess(_ raw: String) async -> String {
         let trimmedResult = raw.trimmingCharacters(in: .whitespacesAndNewlines)
 
         // Filter out known hallucinations
@@ -437,14 +420,23 @@ class TranscriptionService {
             return ""
         }
 
-        // Apply text formatting (punctuation + capitalization) if enabled
         let formattingStart = LatencyLog.now()
-        let formattedResult = await textFormattingService.format(text: trimmedResult)
 
-        // Remove any remaining transcription artifacts
-        let cleanedResult = cleanTranscriptionArtifacts(formattedResult)
+        // Sound tags out, bracketed words kept, before punctuation so the model sees every word
+        var text = cleanTranscriptionArtifacts(trimmedResult)
+        if text != trimmedResult && (text.isEmpty || isHallucination(text)) {
+            return ""
+        }
+
+        // Stutters, repeated words/phrases and hesitation sounds
+        if settingsService.settings.cleanupEnabled {
+            text = SpeechCleanup.clean(text)
+        }
+
+        // Apply text formatting (punctuation + capitalization) if enabled
+        let formattedResult = await textFormattingService.format(text: text)
         lastTimings.formattingMs = LatencyLog.log("stop.format", since: formattingStart)
-        return cleanedResult
+        return formattedResult
     }
 
     /// Finishes a recording that was transcribed while it was recorded (see

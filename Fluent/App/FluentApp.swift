@@ -122,6 +122,11 @@ enum PunctuationSelfTest {
             //   Fluent --incremental-selftest /path/to/audio.m4a ar|auto [--fast] [--min-segment 2.5]
             runIncrementalSelfTest(arguments[index + 1], language: arguments[index + 2], arguments: arguments)
         }
+        if arguments.contains("--cleanup-selftest") {
+            // Bracket cleanup + speech cleanup + punctuation through TranscriptionService.postProcess:
+            //   Fluent --cleanup-selftest   (exit code 1 if any case fails)
+            runCleanupSelfTest()
+        }
         if let index = arguments.firstIndex(of: "--transcribe-selftest"), index + 1 < arguments.count {
             runTranscription(audioPath: arguments[index + 1])
         }
@@ -460,6 +465,100 @@ enum PunctuationSelfTest {
             AudarModelManager.shared.unloadModel() // llama.cpp asserts at exit if the engine is alive
             fflush(stdout)
             exit(0)
+        }
+        dispatchMain()
+    }
+
+    /// Input → expected final text. Expected text is compared word by word, case-sensitive,
+    /// ignoring only punctuation at word edges (the punctuation model's choice), so "C.R.M."
+    /// still fails against "CRM". An empty expectation means the utterance is dropped.
+    private static let cleanupCases: [(input: String, expected: String)] = [
+        // Bracketed English words inside Arabic speech are speech; sound tags are not
+        ("شيلوا إن ال [CRM] مسوي لأمه [block] لا لا لا تبينوا أبدا",
+         "شيلوا إن ال CRM مسوي لأمه block لا تبينوا أبدا"),
+        ("[CRM]", "CRM"),
+        ("ابغى أرسل الإيميل لل [team] بكرة", "ابغى أرسل الإيميل لل team بكرة"),
+        ("خلص ال iPhone الجديد وصل", "خلص ال iPhone الجديد وصل"),
+        ("[Music]", ""),
+        ("[BLANK_AUDIO]", ""),
+        ("(door closes)", ""),
+        ("(applause) شكرا", "شكرا"),
+        ("[ضحك] تمام", "تمام"),
+        ("the plan [Music] works", "The plan works"),
+        // Repeated words
+        ("يعني ما ما ما يطلع أبدا", "يعني ما يطلع أبدا"),
+        ("um so I I think the the plan works", "So I think the plan works"),
+        ("the the", "The"),
+        // Repeated phrases
+        ("انا بدي انا بدي اقلك شي", "انا بدي اقلك شي"),
+        ("قلت له قلت له لا تتأخر", "قلت له لا تتأخر"),
+        ("I think I think it works", "I think it works"),
+        // Legitimate reduplication stays
+        ("شوي شوي", "شوي شوي"),
+        ("خطوة خطوة نوصل", "خطوة خطوة نوصل"),
+        ("خذها واحد واحد", "خذها واحد واحد"),
+        ("very very good", "Very very good"),
+        ("no no no that's wrong", "No no no that's wrong"),
+        ("10 10", "10 10"),
+        ("رقمي خمسة خمسة صفر", "رقمي خمسة خمسة صفر"),
+        // Hesitation sounds go, words meaning "yes" stay
+        ("اممم خلينا نشوف", "خلينا نشوف"),
+        ("إمم ما أدري", "ما أدري"),
+        ("ممم طيب", "طيب"),
+        ("uh I mean we can start", "I mean we can start"),
+        ("hmm let me check", "Let me check"),
+        ("erm well okay", "Well okay"),
+        ("اه تمام", "اه تمام"),
+        ("آه صح", "آه صح"),
+        ("إيه والله", "إيه والله"),
+        ("اممم", "اممم"),   // never drops the last word
+        // A run of 4+ identical letters must not drop the whole dictation
+        ("ههههه والله صح كلامك", "ههههه والله صح كلامك"),
+        ("مممممم خلينا نبلش بالاجتماع", "خلينا نبلش بالاجتماع"),
+        ("??????", ""),
+        // English-only text keeps today's behaviour
+        ("we moved the CRM data to the new server", "We moved the CRM data to the new server"),
+    ]
+
+    /// Runs `cleanupCases` through TranscriptionService.postProcess with formatting and cleanup
+    /// forced on, prints PASS/FAIL per case and exits 1 if any case fails. Settings restored.
+    private static func runCleanupSelfTest() -> Never {
+        Task { @MainActor in
+            let settingsService = SettingsService.shared
+            let originalSettings = settingsService.settings
+            settingsService.settings.formatTextEnabled = true
+            settingsService.settings.cleanupEnabled = true
+            try? await PunctuationModelManager.shared.loadModel()
+            FileHandle.standardError.write(Data("[cleanup] punctuation model: \(PunctuationModelManager.shared.state)\n".utf8))
+
+            let words = { (text: String) -> [String] in
+                text.split(whereSeparator: \.isWhitespace)
+                    .map { $0.trimmingCharacters(in: CharacterSet.punctuationCharacters.subtracting(CharacterSet(charactersIn: "'"))) }
+                    .filter { !$0.isEmpty }
+            }
+            let service = TranscriptionService()
+            var failures = 0
+            for (number, testCase) in cleanupCases.enumerated() {
+                let output = await service.postProcess(testCase.input)
+                let pass = words(output) == words(testCase.expected)
+                if !pass { failures += 1 }
+                print("\(pass ? "PASS" : "FAIL")\t\(number + 1)\t\(testCase.input)\t→\t\(output.replacingOccurrences(of: "\n", with: " ⏎ "))\(pass ? "" : "\t(expected: \(testCase.expected))")")
+            }
+
+            // Cost of the text cleanup itself (no punctuation model) on the longest case.
+            let longest = cleanupCases.map(\.input).max(by: { $0.count < $1.count }) ?? ""
+            let runs = 2000
+            let start = LatencyLog.now()
+            for _ in 0..<runs {
+                _ = SpeechCleanup.clean(SpeechCleanup.unwrapBrackets(longest, nonSpeechPhrases: TranscriptionService.hallucinationPhrases))
+            }
+            let microseconds = LatencyLog.ms(since: start) * 1000 / Double(runs)
+            print("cleanup cost: \(String(format: "%.1f", microseconds)) µs per utterance (\(longest.split(separator: " ").count) words)")
+            print("\(cleanupCases.count - failures)/\(cleanupCases.count) passed")
+
+            settingsService.settings = originalSettings
+            fflush(stdout)
+            exit(failures == 0 ? 0 : 1)
         }
         dispatchMain()
     }

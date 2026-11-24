@@ -512,6 +512,14 @@ struct TranscriptionSettingsCard: View {
                 PunctuationModelRow(punctuationManager: punctuationManager)
             }
 
+            FluentDivider(inset: true)
+
+            FluentToggle(
+                title: "Clean Up Speech",
+                description: "Remove stutters, repeats and filler sounds",
+                isOn: $settingsService.settings.cleanupEnabled
+            )
+
         }
     }
 }
