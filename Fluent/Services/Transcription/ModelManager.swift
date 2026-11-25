@@ -287,7 +287,8 @@ class ModelManager: ObservableObject {
 
     // MARK: - Transcription
 
-    func transcribe(samples: [Float], language: String?) async throws -> String {
+    /// `withoutTimestamps` skips Whisper's timestamp tokens (a faster pass with the same words).
+    func transcribe(samples: [Float], language: String?, withoutTimestamps: Bool = false) async throws -> String {
         guard state.isReady, let whisperKit else {
             throw ModelError.modelNotDownloaded
         }
@@ -307,6 +308,7 @@ class ModelManager: ObservableObject {
                 usePrefillPrompt: true,        // Always enable to inject <|transcribe|> task token
                 usePrefillCache: true,         // Cache prefill for consistency across chunks
                 detectLanguage: language == nil,  // Auto-detect only if no explicit language
+                withoutTimestamps: withoutTimestamps,
                 clipTimestamps: [0],  // Ensure processing starts from beginning
                 suppressBlank: true,
                 supressTokens: nil,

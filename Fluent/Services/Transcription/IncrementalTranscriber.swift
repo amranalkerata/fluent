@@ -245,6 +245,19 @@ struct StreamingConfig {
     /// early words differing from the final text and no loss against references; HOLD-1 was
     /// ~0.5 s faster but 20% of its early words differed.
     var policy: StreamingCommitter.Policy = .localAgreement
+    /// Whisper (English and other languages): `--streaming-selftest --language en` on 6 clips
+    /// plus 29 s of speech without a pause typed words after 0.9 s / 1.33 s with HOLD-1 against
+    /// 1.65 s / 2.61 s with local agreement, with 0.9% of early words differing from the final
+    /// text. A Whisper pass costs ≥ 0.8 s (a fixed ~0.6 s encoder), so waiting for a second
+    /// pass to agree doubles the wait; Whisper's English is stable enough not to.
+    var whisperPolicy: StreamingCommitter.Policy = .hold(1)
+
+    func policy(for engine: IncrementalTranscriber.Engine) -> StreamingCommitter.Policy {
+        switch engine {
+        case .audar: return policy
+        case .whisper: return whisperPolicy
+        }
+    }
     /// A partial pass needs at least this much new audio since the previous one.
     var partialInterval = 0.5
     /// First partial pass of a segment once it holds this much audio.
@@ -253,6 +266,9 @@ struct StreamingConfig {
     /// that segment; its words are then typed when it closes, as without streaming. One slow
     /// pass alone (the GPU busy with language detection, a cold start) does not.
     var maxPartialMs = 1500.0
+    /// The same for Whisper, whose passes cost ≥ 0.8 s and pass 1.5 s on ~20 s of speech
+    /// without a pause: a slow pass there still types words long before the segment closes.
+    var whisperMaxPartialMs = 3000.0
 }
 
 /// Transcribes a recording with Audar while it is still being recorded: each finished speech
@@ -445,7 +461,7 @@ actor IncrementalTranscriber {
         self.detectsLanguage = detectsLanguage
         self.streaming = streaming
         self.segmenter = SpeechSegmenter(config: config)
-        openCommitter = StreamingCommitter(policy: streaming?.policy ?? .localAgreement)
+        openCommitter = StreamingCommitter(policy: streaming?.policy(for: engine) ?? .localAgreement)
         samples.reserveCapacity(60 * SpeechSegmenter.sampleRate)
         var continuation: AsyncStream<LiveEvent>.Continuation!
         liveEvents = AsyncStream(bufferingPolicy: .unbounded) { continuation = $0 }
@@ -555,7 +571,7 @@ actor IncrementalTranscriber {
             let start = LatencyLog.now()
             let outcome: Result<String, Error>
             do {
-                outcome = .success(try await Self.transcribe(audio, with: engine))
+                outcome = .success(try await Self.transcribe(audio, with: engine, partial: false))
             } catch {
                 outcome = .failure(error)
             }
@@ -564,15 +580,16 @@ actor IncrementalTranscriber {
     }
 
     /// One run of `engine` on `audio`. Whisper reads nothing from less than a second of audio,
-    /// so a shorter window is padded with silence.
-    nonisolated private static func transcribe(_ audio: [Float], with engine: Engine) async throws -> String {
+    /// so a shorter window is padded with silence; a partial pass skips Whisper's timestamp
+    /// tokens (5-10% faster on long windows, same words).
+    nonisolated private static func transcribe(_ audio: [Float], with engine: Engine, partial: Bool) async throws -> String {
         switch engine {
         case .audar(let language):
             return try await AudarModelManager.shared.transcribe(samples: audio, language: language)
         case .whisper(let language):
             let minimum = Self.whisperMinimumSamples
             let padded = audio.count < minimum ? audio + [Float](repeating: 0, count: minimum - audio.count) : audio
-            return try await ModelManager.shared.transcribe(samples: padded, language: language)
+            return try await ModelManager.shared.transcribe(samples: padded, language: language, withoutTimestamps: partial)
         }
     }
 
@@ -645,7 +662,7 @@ actor IncrementalTranscriber {
                 return
             }
             let start = LatencyLog.now()
-            let text = try? await Self.transcribe(audio, with: engine)
+            let text = try? await Self.transcribe(audio, with: engine, partial: true)
             await self.recordPartial(index, text, generation: generation, startedAt: start, windowEnd: windowEnd)
         }
     }
@@ -668,7 +685,12 @@ actor IncrementalTranscriber {
         // Only while the segment is still open: once it closed, its final pass decides.
         if index == queued, abandoned == nil, failure == nil {
             if let streaming {
-                slowPartials = ms > streaming.maxPartialMs ? slowPartials + 1 : 0
+                let limit: Double
+                switch engine {
+                case .audar: limit = streaming.maxPartialMs
+                case .whisper: limit = streaming.whisperMaxPartialMs
+                }
+                slowPartials = ms > limit ? slowPartials + 1 : 0
                 if slowPartials >= 2 { partialsStopped = true }
             }
             if let text {
@@ -749,7 +771,7 @@ actor IncrementalTranscriber {
         segmentMs.removeAll()
         segmentSeconds.removeAll()
         closedCommitters.removeAll()
-        openCommitter = StreamingCommitter(policy: openCommitter.policy)
+        openCommitter = StreamingCommitter(policy: streaming?.policy(for: engine) ?? openCommitter.policy)
         lastPartialEnd = nil
         partialsStopped = false
         slowPartials = 0

@@ -1,6 +1,10 @@
 import SwiftUI
 import SwiftData
 import AVFoundation
+#if DEBUG
+import WhisperKit
+import CoreML
+#endif
 
 @main
 struct FluentApp: App {
@@ -128,6 +132,12 @@ enum PunctuationSelfTest {
             //   Fluent --streaming-selftest clip.wav|dir [...] [--interval 0.5|0] [--refs refs.json]
             //          [--max-partial-ms 1500] [--min-partial 1.0] [--max-segment 25] [--relax-after 8] [--language en]
             runStreamingSelfTest(arguments)
+        }
+        if arguments.contains("--whisper-timing-selftest") {
+            // Where a Whisper pass spends its time (encoder vs decoder loop) under different
+            // compute units and decoding options, on every .wav of a folder:
+            //   Fluent --whisper-timing-selftest dir [--decoder ane|gpu] [--encoder ane|gpu] [--no-timestamps]
+            runWhisperTimingSelfTest(arguments)
         }
         if arguments.contains("--detect-prefix-selftest") {
             // Whisper language detection at the in-recording trigger points: for every clip and
@@ -524,6 +534,51 @@ enum PunctuationSelfTest {
     /// appeared in (with `--interval 0` that window is the whole segment, so FINAL there
     /// understates latency: compare FINAL rows of a streaming run instead). TSV on stdout, one row per clip and policy, then totals. Files starting with
     /// "00_" are warm-up. Language Arabic, formatting on; settings restored on exit.
+    private static func runWhisperTimingSelfTest(_ arguments: [String]) -> Never {
+        Task { @MainActor in
+            let log = { (line: String) in FileHandle.standardError.write(Data("[whisper-timing] \(line)\n".utf8)) }
+            let option = { (name: String) -> String? in
+                guard let index = arguments.firstIndex(of: name), index + 1 < arguments.count else { return nil }
+                return arguments[index + 1]
+            }
+            let units = { (name: String?) -> MLComputeUnits in name == "gpu" ? .cpuAndGPU : .cpuAndNeuralEngine }
+            let dir = arguments[arguments.firstIndex(of: "--whisper-timing-selftest")! + 1]
+            let noTimestamps = arguments.contains("--no-timestamps")
+            do {
+                let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                let folder = appSupport.appendingPathComponent("Fluent/WhisperKitModels/openai_whisper-large-v3-v20240930_626MB")
+                let kit = try await WhisperKit(modelFolder: folder.path,
+                                               computeOptions: ModelComputeOptions(audioEncoderCompute: units(option("--encoder")),
+                                                                                   textDecoderCompute: units(option("--decoder"))),
+                                               verbose: false, prewarm: true)
+                let options = DecodingOptions(task: .transcribe, language: "en", temperature: 0, temperatureFallbackCount: 0,
+                                              sampleLength: 224, usePrefillPrompt: true, usePrefillCache: true,
+                                              detectLanguage: false, skipSpecialTokens: true, withoutTimestamps: noTimestamps,
+                                              clipTimestamps: [0], suppressBlank: true, supressTokens: nil,
+                                              compressionRatioThreshold: 2.4, logProbThreshold: -1.0,
+                                              firstTokenLogProbThreshold: nil, noSpeechThreshold: 0.6)
+                let files = try FileManager.default.contentsOfDirectory(atPath: dir).filter { $0.hasSuffix(".wav") }.sorted()
+                print(["file", "total_ms", "encoding_ms", "decoding_loop_ms", "tokens", "text"].joined(separator: "\t"))
+                for file in files {
+                    let samples = try await AudioConverter.convertToWhisperSamples(url: URL(fileURLWithPath: dir).appendingPathComponent(file))
+                    let start = LatencyLog.now()
+                    let results = try await kit.transcribe(audioArray: samples, decodeOptions: options)
+                    let ms = LatencyLog.ms(since: start)
+                    let timings = results.first?.timings
+                    let tokens = results.flatMap { $0.segments }.reduce(0) { $0 + $1.tokens.count }
+                    print([file, String(format: "%.0f", ms), String(format: "%.0f", (timings?.encoding ?? 0) * 1000),
+                           String(format: "%.0f", (timings?.decodingLoop ?? 0) * 1000), "\(tokens)",
+                           results.map(\.text).joined(separator: " ")].joined(separator: "\t"))
+                }
+            } catch {
+                log("error: \(error.localizedDescription)")
+            }
+            fflush(stdout)
+            exit(0)
+        }
+        dispatchMain()
+    }
+
     private static func runDetectPrefixSelfTest(_ arguments: [String]) -> Never {
         Task { @MainActor in
             let log = { (line: String) in FileHandle.standardError.write(Data("[detect] \(line)\n".utf8)) }
