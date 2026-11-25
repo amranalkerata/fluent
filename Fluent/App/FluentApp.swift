@@ -126,7 +126,7 @@ enum PunctuationSelfTest {
             // Streaming live typing simulated in real time: partial passes on the open segment,
             // commit policies compared offline on the same hypotheses (posts no keyboard events):
             //   Fluent --streaming-selftest clip.wav|dir [...] [--interval 0.5|0] [--refs refs.json]
-            //          [--max-partial-ms 1500] [--min-partial 1.0] [--max-segment 25] [--relax-after 8]
+            //          [--max-partial-ms 1500] [--min-partial 1.0] [--max-segment 25] [--relax-after 8] [--language en]
             runStreamingSelfTest(arguments)
         }
         if arguments.contains("--detect-prefix-selftest") {
@@ -587,7 +587,7 @@ enum PunctuationSelfTest {
                         let ms = LatencyLog.ms(since: start)
                         // The in-recording rule of IncrementalTranscriber.recordDetection (first run).
                         let arabic = TranscriptionService.isArabicLike(result.language)
-                        let outcome = !arabic && result.confidence >= IncrementalTranscriber.abandonConfidence
+                        let outcome = !arabic && result.confidence >= IncrementalTranscriber.otherLanguageConfidence
                             ? "abandon"
                             : (arabic && result.confidence >= TranscriptionService.minimumDetectionConfidence ? "settle" : "hold")
                         outcomes[threshold, default: [:]][outcome, default: 0] += 1
@@ -648,7 +648,8 @@ enum PunctuationSelfTest {
             var finalMs: [Double] = []
 
             do {
-                settingsService.settings.language = .arabic
+                // --language en|… streams that language through Whisper; Arabic by default.
+                settingsService.settings.language = option("--language").flatMap(AppSettings.TranscriptionLanguage.init(rawValue:)) ?? .arabic
                 settingsService.settings.formatTextEnabled = true
                 settingsService.settings.audarEnabled = true
                 if !settingsService.settings.audarLicenseAccepted {

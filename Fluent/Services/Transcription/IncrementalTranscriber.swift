@@ -286,6 +286,8 @@ actor IncrementalTranscriber {
         var audioSeconds: Double = 0
         var detectionMs: Double?
         var reason = ""
+        /// The engine that transcribed the recording.
+        var engine: SpeechEngine = .audar
     }
 
     /// One Audar run on a segment, for the DEBUG streaming self-test.
@@ -311,9 +313,9 @@ actor IncrementalTranscriber {
     /// as English at 0.62, above `minimumDetectionConfidence`).
     private static let detectionSpeechSeconds = 1.0
     private static let redetectionSpeechSeconds = 2.5
-    /// A detection takes the recording away from Audar only when it is this sure the speech is
-    /// another language.
-    static let abandonConfidence: Float = 0.9
+    /// A detection moves the recording from Audar to Whisper only when it is this sure the
+    /// speech is another language.
+    static let otherLanguageConfidence: Float = 0.9
     /// Whisper reads at most the first 30 s.
     private static let detectionMaxSamples = 30 * SpeechSegmenter.sampleRate
     /// The punctuation model's first prediction after ~30-60 s idle takes ~0.8 s instead of
@@ -334,7 +336,28 @@ actor IncrementalTranscriber {
     private let liveContinuation: AsyncStream<LiveEvent>.Continuation
     private var liveGate: LiveSegmentGate<LiveEvent>
 
-    private let audarLanguage: String?
+    /// The engine that transcribes the recording and the language it is given.
+    enum Engine: Equatable, Sendable {
+        /// Arabic (the language is nil when Audar identifies it itself).
+        case audar(language: String?)
+        /// Any other language, Whisper's code ("en", "fr"…).
+        case whisper(language: String)
+
+        var speechEngine: SpeechEngine {
+            switch self {
+            case .audar: return .audar
+            case .whisper: return .whisper
+            }
+        }
+    }
+
+    /// Audar for Arabic; auto mode moves to Whisper when a detection is sure the speech is
+    /// another language (`otherLanguageConfidence`).
+    private var engine: Engine
+    /// Bumped when the engine changes: runs queued for the previous engine are dropped.
+    private var generation = 0
+    /// Audio of every closed segment, in order, read again after an engine change.
+    private var closedRanges: [Range<Int>] = []
     private let detectsLanguage: Bool
     private let streaming: StreamingConfig?
     private var segmenter: SpeechSegmenter
@@ -343,9 +366,9 @@ actor IncrementalTranscriber {
     /// The recorder's sample stream, until reading it starts.
     private var stream: AsyncStream<[Float]>?
     private var feedTask: Task<Void, Never>?
-    /// Last queued Audar run; each run awaits the one before, so Audar sees them in order.
+    /// Last queued engine run; each run awaits the one before, so the engine sees them in order.
     private var lastRun: Task<Void, Never>?
-    /// Audar runs queued or running (partial passes included).
+    /// Engine runs queued or running (partial passes included).
     private var runsInFlight = 0
     private var queued = 0
     private var texts: [Int: String] = [:]
@@ -384,34 +407,41 @@ actor IncrementalTranscriber {
     }
     #endif
 
-    /// A session for this recording, or nil when the full-file path will handle it
-    /// (Audar not usable, or a language other than Arabic/auto).
+    /// A session for this recording, or nil when the full-file path will handle it: Arabic or
+    /// auto without Audar, or another language without Whisper loaded.
     /// `stream` is the recorder's 16 kHz mono sample stream (`AudioRecordingService.audioStream`).
     /// `streaming` turns on partial passes; only for a recording that is typed live.
     @MainActor
     static func makeIfApplicable(stream: AsyncStream<[Float]>, config: SpeechSegmenter.Config = .init(),
                                  streaming: StreamingConfig? = nil) -> IncrementalTranscriber? {
-        guard AudarModelManager.shared.isUsable else { return nil }
+        let audarUsable = AudarModelManager.shared.isUsable
+        let whisperReady = ModelManager.shared.state.isReady
         let language = SettingsService.shared.settings.language.rawValue
         switch language {
         case "ar":
-            return IncrementalTranscriber(stream: stream, languageSetting: language, audarLanguage: "ar",
+            guard audarUsable else { return nil }
+            return IncrementalTranscriber(stream: stream, languageSetting: language, engine: .audar(language: "ar"),
                                           detectsLanguage: false, config: config, streaming: streaming)
         case "":
             // Same routing as TranscriptionService: without Whisper, Audar identifies the language itself.
-            let whisperReady = ModelManager.shared.state.isReady
-            return IncrementalTranscriber(stream: stream, languageSetting: language, audarLanguage: whisperReady ? "ar" : nil,
+            guard audarUsable else { return nil }
+            return IncrementalTranscriber(stream: stream, languageSetting: language,
+                                          engine: .audar(language: whisperReady ? "ar" : nil),
                                           detectsLanguage: whisperReady, config: config, streaming: streaming)
         default:
-            return nil
+            // English or another language set explicitly: Whisper in that language, as the
+            // full-file path does.
+            guard whisperReady else { return nil }
+            return IncrementalTranscriber(stream: stream, languageSetting: language, engine: .whisper(language: language),
+                                          detectsLanguage: false, config: config, streaming: streaming)
         }
     }
 
-    private init(stream: AsyncStream<[Float]>, languageSetting: String, audarLanguage: String?,
+    private init(stream: AsyncStream<[Float]>, languageSetting: String, engine: Engine,
                  detectsLanguage: Bool, config: SpeechSegmenter.Config, streaming: StreamingConfig?) {
         self.stream = stream
         self.languageSetting = languageSetting
-        self.audarLanguage = audarLanguage
+        self.engine = engine
         self.detectsLanguage = detectsLanguage
         self.streaming = streaming
         self.segmenter = SpeechSegmenter(config: config)
@@ -442,7 +472,9 @@ actor IncrementalTranscriber {
     /// punctuation (sound tags out, bracketed words unwrapped, speech cleanup), and false for
     /// a hallucination (no words then).
     static func hypothesisWords(_ raw: String, filter: TranscriptionService, cleanup: Bool) -> (words: [String], acceptable: Bool) {
+        // Whisper sometimes quotes a whole utterance ("Hey, can you…"); the quotes are not speech.
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\"“”"))
         if filter.isHallucination(trimmed) { return ([], false) }
         var text = SpeechCleanup.unwrapBrackets(trimmed, nonSpeechPhrases: TranscriptionService.hallucinationPhrases)
         if text != trimmed && (text.isEmpty || filter.isHallucination(text)) { return ([], false) }
@@ -504,45 +536,67 @@ actor IncrementalTranscriber {
         lastPartialEnd = nil
         partialsStopped = false
         slowPartials = 0
+        closedRanges.append(range)
 
         let audio = Array(samples[range])
         let windowEnd = Double(range.upperBound) / Double(SpeechSegmenter.sampleRate)
         segmentSeconds.append(Double(audio.count) / Double(SpeechSegmenter.sampleRate))
-        let language = audarLanguage
+        let engine = self.engine
+        let generation = self.generation
         let previous = lastRun
         runsInFlight += 1
         lastRun = Task { [weak self] in
             await previous?.value
             guard let self else { return }
-            guard await self.shouldRun() else {
+            guard await self.shouldRun(generation) else {
                 await self.runSkipped()
                 return
             }
-            let audar = await AudarModelManager.shared
             let start = LatencyLog.now()
             let outcome: Result<String, Error>
             do {
-                outcome = .success(try await audar.transcribe(samples: audio, language: language))
+                outcome = .success(try await Self.transcribe(audio, with: engine))
             } catch {
                 outcome = .failure(error)
             }
-            await self.record(index, outcome, startedAt: start, windowEnd: windowEnd)
+            await self.record(index, outcome, generation: generation, startedAt: start, windowEnd: windowEnd)
         }
     }
 
-    private func shouldRun() -> Bool {
-        abandoned == nil && failure == nil
+    /// One run of `engine` on `audio`. Whisper reads nothing from less than a second of audio,
+    /// so a shorter window is padded with silence.
+    nonisolated private static func transcribe(_ audio: [Float], with engine: Engine) async throws -> String {
+        switch engine {
+        case .audar(let language):
+            return try await AudarModelManager.shared.transcribe(samples: audio, language: language)
+        case .whisper(let language):
+            let minimum = Self.whisperMinimumSamples
+            let padded = audio.count < minimum ? audio + [Float](repeating: 0, count: minimum - audio.count) : audio
+            return try await ModelManager.shared.transcribe(samples: padded, language: language)
+        }
+    }
+
+    private static let whisperMinimumSamples = 3 * SpeechSegmenter.sampleRate / 2
+
+    private func shouldRun(_ generation: Int) -> Bool {
+        abandoned == nil && failure == nil && generation == self.generation
     }
 
     private func runSkipped() {
         runsInFlight -= 1
+        maybeRunPartial()
     }
 
-    private func record(_ index: Int, _ outcome: Result<String, Error>, startedAt: UInt64, windowEnd: Double) {
+    private func record(_ index: Int, _ outcome: Result<String, Error>, generation: Int, startedAt: UInt64, windowEnd: Double) {
         runsInFlight -= 1
+        // Queued before an engine change: the segment is read again by the new engine.
+        guard generation == self.generation else {
+            maybeRunPartial()
+            return
+        }
         let ms = LatencyLog.ms(since: startedAt)
         segmentMs[index] = ms
-        LatencyLog.log("rec.segment_asr", ms: ms, engine: SpeechEngine.audar.rawValue)
+        LatencyLog.log("rec.segment_asr", ms: ms, engine: engine.speechEngine.rawValue)
         switch outcome {
         case .success(let text):
             texts[index] = text
@@ -579,21 +633,29 @@ actor IncrementalTranscriber {
         let index = queued
         let audio = Array(samples[start..<end])
         let windowEnd = Double(end) / rate
-        let language = audarLanguage
+        let engine = self.engine
+        let generation = self.generation
         let previous = lastRun
         runsInFlight += 1
         lastRun = Task { [weak self] in
             await previous?.value
             guard let self else { return }
-            let audar = await AudarModelManager.shared
+            guard await self.shouldRun(generation) else {
+                await self.runSkipped()
+                return
+            }
             let start = LatencyLog.now()
-            let text = try? await audar.transcribe(samples: audio, language: language)
-            await self.recordPartial(index, text, startedAt: start, windowEnd: windowEnd)
+            let text = try? await Self.transcribe(audio, with: engine)
+            await self.recordPartial(index, text, generation: generation, startedAt: start, windowEnd: windowEnd)
         }
     }
 
-    private func recordPartial(_ index: Int, _ text: String?, startedAt: UInt64, windowEnd: Double) {
+    private func recordPartial(_ index: Int, _ text: String?, generation: Int, startedAt: UInt64, windowEnd: Double) {
         runsInFlight -= 1
+        guard generation == self.generation else {
+            maybeRunPartial()
+            return
+        }
         let ms = LatencyLog.ms(since: startedAt)
         LatencyLog.log("rec.partial_asr", ms: ms)
         #if DEBUG
@@ -664,12 +726,38 @@ actor IncrementalTranscriber {
         }
         detection = result
         let arabic = TranscriptionService.isArabicLike(result.language)
-        if !arabic && result.confidence >= Self.abandonConfidence {
-            abandon("detected non-Arabic speech")
+        if !arabic && result.confidence >= Self.otherLanguageConfidence {
+            switchToWhisper(language: result.language)
         } else if (arabic && result.confidence >= TranscriptionService.minimumDetectionConfidence) || detectionRuns >= 2 {
             // No later detection can run (see maybeDetectLanguage), so Audar keeps this recording.
             settleLanguage()
         }
+    }
+
+    /// The speech is another language: Whisper transcribes the recording from the start, in
+    /// that language. Nothing has been typed yet (the language was not settled), so the closed
+    /// segments are read again and the words Audar committed are dropped with their gate.
+    private func switchToWhisper(language: String) {
+        guard abandoned == nil, failure == nil else { return }
+        LatencyLog.logger.info("incremental: switching to Whisper (\(language, privacy: .public))")
+        engine = .whisper(language: language)
+        generation += 1
+        let ranges = closedRanges
+        closedRanges = []
+        queued = 0
+        texts.removeAll()
+        segmentMs.removeAll()
+        segmentSeconds.removeAll()
+        closedCommitters.removeAll()
+        openCommitter = StreamingCommitter(policy: openCommitter.policy)
+        lastPartialEnd = nil
+        partialsStopped = false
+        slowPartials = 0
+        liveGate = LiveSegmentGate(settled: true)
+        for range in ranges {
+            enqueue(range)
+        }
+        maybeRunPartial()
     }
 
     private func abandon(_ reason: String) {
@@ -734,8 +822,13 @@ actor IncrementalTranscriber {
         if let detection {
             stats.reason = "incremental, auto, detected \(detection.language) (\(String(format: "%.2f", detection.confidence)))"
         } else {
-            stats.reason = languageSetting == "ar" ? "incremental, language set to Arabic" : "incremental, auto, Whisper not ready"
+            switch languageSetting {
+            case "ar": stats.reason = "incremental, language set to Arabic"
+            case "": stats.reason = "incremental, auto, Whisper not ready"
+            default: stats.reason = "incremental, language set to \(languageSetting)"
+            }
         }
+        stats.engine = engine.speechEngine
         stats.finishMs = LatencyLog.ms(since: start)
         return .transcript(joined, stats)
     }

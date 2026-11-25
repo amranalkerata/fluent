@@ -487,7 +487,7 @@ class TranscriptionService {
 
         case .transcript(_, let stats):
             lastTimings = StageTimings()
-            lastEngine = .audar
+            lastEngine = stats.engine
             lastRouteReason = stats.reason
             lastTimings.audioSeconds = stats.audioSeconds
             lastTimings.detectionMs = stats.detectionMs

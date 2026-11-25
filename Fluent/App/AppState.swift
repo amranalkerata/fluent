@@ -229,7 +229,7 @@ class AppState: ObservableObject {
         }
     }
 
-    /// Arabic/auto with Audar: transcribe finished speech segments while the user talks,
+    /// Transcribe finished speech segments while the user talks (Audar for Arabic/auto, Whisper for other languages),
     /// so only the last one is left at stop. Everything else keeps the full-file path.
     private func startIncrementalTranscription() {
         incrementalSession = nil
