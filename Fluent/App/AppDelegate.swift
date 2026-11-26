@@ -25,6 +25,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     func applicationWillTerminate(_ notification: Notification) {
         disableEventTap()
+        // Free the Audar engine before exit: llama.cpp's Metal backend asserts at process
+        // teardown if a model or context is still alive, which would turn every quit into a crash.
+        MainActor.assumeIsolated {
+            AudarModelManager.shared.unloadModel()
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

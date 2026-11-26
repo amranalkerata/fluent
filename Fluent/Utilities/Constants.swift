@@ -5,10 +5,10 @@ enum Constants {
     static let bundleIdentifier = "com.fluent.app"
 
     enum Model {
-        // WhisperKit Core ML model (~150MB)
-        static let modelName = "small"
+        // WhisperKit Core ML model: Whisper large-v3-turbo (~626MB)
+        static let modelName = "large-v3-v20240930_626MB"
         static let modelRepo = "argmaxinc/whisperkit-coreml"
-        static let expectedSize: Int64 = 150_000_000 // ~150MB
+        static let expectedSize: Int64 = 626_000_000 // ~626MB
     }
 
     enum Audio {

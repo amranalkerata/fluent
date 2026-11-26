@@ -10,6 +10,11 @@ class SoundService {
         }
     }
 
+    /// Length of the start/stop sound in seconds (0 when it is missing).
+    var recordingSoundDuration: TimeInterval {
+        sound?.duration ?? 0
+    }
+
     func playRecordingSound() {
         sound?.stop()
         sound?.play()

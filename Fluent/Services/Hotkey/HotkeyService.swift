@@ -6,6 +6,9 @@ import AppKit
 class HotkeyService: ObservableObject {
     static let shared = HotkeyService()
 
+    /// `shortcutTriggered` userInfo key: `LatencyLog.now()` when the shortcut was pressed (UInt64).
+    static let pressedAtKey = "pressedAt"
+
     @Published var shortcutConfiguration: ShortcutConfiguration
     @Published var isRecordingShortcut = false
     @Published var lastRecordedShortcut: KeyboardShortcut?
@@ -122,9 +125,14 @@ class HotkeyService: ObservableObject {
         }
 
         lastActionTriggerTime[action] = now
+        let pressedAt = LatencyLog.now()
 
         DispatchQueue.main.async {
-            NotificationCenter.default.post(name: .shortcutTriggered, object: action)
+            NotificationCenter.default.post(
+                name: .shortcutTriggered,
+                object: action,
+                userInfo: [HotkeyService.pressedAtKey: pressedAt]
+            )
         }
     }
 

@@ -1,0 +1,2 @@
+Fluent/Resources/Models/PunctCapSeg.mlpackage/Data/com.apple.CoreML/weights/*.bin filter=lfs diff=lfs merge=lfs -text
+Vendor/llama.xcframework/**/dSYMs/llama.dSYM/Contents/Resources/DWARF/llama filter=lfs diff=lfs merge=lfs -text

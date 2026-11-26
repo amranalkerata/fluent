@@ -52,12 +52,39 @@
 		046 /* TextFormattingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 146 /* TextFormattingService.swift */; };
 		047 /* PunctuationModelManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 147 /* PunctuationModelManager.swift */; };
 		050 /* ListFormattingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 150 /* ListFormattingService.swift */; };
-		049 /* spe_32k_lc_en.model in Resources */ = {isa = PBXBuildFile; fileRef = 149 /* spe_32k_lc_en.model */; };
-		15B0A7E92F2CF65E006AA075 /* onnxruntime in Frameworks */ = {isa = PBXBuildFile; productRef = 15B0A7E82F2CF65E006AA075 /* onnxruntime */; };
-		15B0A7EB2F2CF65E006AA075 /* onnxruntime_extensions in Frameworks */ = {isa = PBXBuildFile; productRef = 15B0A7EA2F2CF65E006AA075 /* onnxruntime_extensions */; };
 		15B0A7EE2F2CF685006AA075 /* SentencepieceTokenizer in Frameworks */ = {isa = PBXBuildFile; productRef = 15B0A7ED2F2CF685006AA075 /* SentencepieceTokenizer */; };
 		051 /* SystemAudioService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 151 /* SystemAudioService.swift */; };
+		063 /* LatencyLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 163 /* LatencyLog.swift */; };
+		052 /* AudioDeviceManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 152 /* AudioDeviceManager.swift */; };
+		053 /* PunctCapSeg.mlpackage in Sources */ = {isa = PBXBuildFile; fileRef = 153 /* PunctCapSeg.mlpackage */; };
+		054 /* xlmr_punct_sp.model in Resources */ = {isa = PBXBuildFile; fileRef = 154 /* xlmr_punct_sp.model */; };
+		055 /* LlamaRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 155 /* LlamaRuntime.swift */; };
+		056 /* llama.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 156 /* llama.xcframework */; };
+		057 /* llama.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 156 /* llama.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		058 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 158 /* Metal.framework */; };
+		059 /* Accelerate.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 159 /* Accelerate.framework */; };
+		060 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 160 /* Foundation.framework */; };
+		061 /* AudarEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 161 /* AudarEngine.swift */; };
+		064 /* IncrementalTranscriber.swift in Sources */ = {isa = PBXBuildFile; fileRef = 164 /* IncrementalTranscriber.swift */; };
+		065 /* SpeechCleanup.swift in Sources */ = {isa = PBXBuildFile; fileRef = 165 /* SpeechCleanup.swift */; };
+		067 /* LiveStreaming.swift in Sources */ = {isa = PBXBuildFile; fileRef = 167 /* LiveStreaming.swift */; };
+		066 /* TypingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 166 /* TypingService.swift */; };
+		062 /* AudarModelManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 162 /* AudarModelManager.swift */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		802 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				057 /* llama.xcframework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		101 /* FluentApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FluentApp.swift; sourceTree = "<group>"; };
@@ -105,9 +132,23 @@
 		146 /* TextFormattingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextFormattingService.swift; sourceTree = "<group>"; };
 		147 /* PunctuationModelManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PunctuationModelManager.swift; sourceTree = "<group>"; };
 		150 /* ListFormattingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListFormattingService.swift; sourceTree = "<group>"; };
-		149 /* spe_32k_lc_en.model */ = {isa = PBXFileReference; lastKnownFileType = file; path = spe_32k_lc_en.model; sourceTree = "<group>"; };
 		15C981DD2F190AE800C28913 /* File.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = File.txt; sourceTree = "<group>"; };
 		151 /* SystemAudioService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemAudioService.swift; sourceTree = "<group>"; };
+		163 /* LatencyLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LatencyLog.swift; sourceTree = "<group>"; };
+		152 /* AudioDeviceManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioDeviceManager.swift; sourceTree = "<group>"; };
+		153 /* PunctCapSeg.mlpackage */ = {isa = PBXFileReference; lastKnownFileType = folder.mlpackage; path = PunctCapSeg.mlpackage; sourceTree = "<group>"; };
+		154 /* xlmr_punct_sp.model */ = {isa = PBXFileReference; lastKnownFileType = file; path = xlmr_punct_sp.model; sourceTree = "<group>"; };
+		155 /* LlamaRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LlamaRuntime.swift; sourceTree = "<group>"; };
+		156 /* llama.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = llama.xcframework; path = Vendor/llama.xcframework; sourceTree = SOURCE_ROOT; };
+		158 /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
+		159 /* Accelerate.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Accelerate.framework; path = System/Library/Frameworks/Accelerate.framework; sourceTree = SDKROOT; };
+		160 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = System/Library/Frameworks/Foundation.framework; sourceTree = SDKROOT; };
+		161 /* AudarEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudarEngine.swift; sourceTree = "<group>"; };
+		164 /* IncrementalTranscriber.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IncrementalTranscriber.swift; sourceTree = "<group>"; };
+		165 /* SpeechCleanup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechCleanup.swift; sourceTree = "<group>"; };
+		167 /* LiveStreaming.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveStreaming.swift; sourceTree = "<group>"; };
+		166 /* TypingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypingService.swift; sourceTree = "<group>"; };
+		162 /* AudarModelManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudarModelManager.swift; sourceTree = "<group>"; };
 		900 /* Fluent.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Fluent.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -117,9 +158,11 @@
 			buildActionMask = 2147483647;
 			files = (
 				15B0A7EE2F2CF685006AA075 /* SentencepieceTokenizer in Frameworks */,
-				15B0A7E92F2CF65E006AA075 /* onnxruntime in Frameworks */,
 				045 /* WhisperKit in Frameworks */,
-				15B0A7EB2F2CF65E006AA075 /* onnxruntime_extensions in Frameworks */,
+				056 /* llama.xcframework in Frameworks */,
+				058 /* Metal.framework in Frameworks */,
+				059 /* Accelerate.framework in Frameworks */,
+				060 /* Foundation.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -130,6 +173,7 @@
 			isa = PBXGroup;
 			children = (
 				200 /* Fluent */,
+				225 /* Frameworks */,
 				901 /* Products */,
 				15C981DD2F190AE800C28913 /* File.txt */,
 			);
@@ -215,7 +259,8 @@
 		209 /* Models */ = {
 			isa = PBXGroup;
 			children = (
-				149 /* spe_32k_lc_en.model */,
+				153 /* PunctCapSeg.mlpackage */,
+				154 /* xlmr_punct_sp.model */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -249,6 +294,7 @@
 			isa = PBXGroup;
 			children = (
 				108 /* AudioRecordingService.swift */,
+				152 /* AudioDeviceManager.swift */,
 				142 /* SoundService.swift */,
 				145 /* AudioConverter.swift */,
 			);
@@ -263,6 +309,12 @@
 				146 /* TextFormattingService.swift */,
 				147 /* PunctuationModelManager.swift */,
 				150 /* ListFormattingService.swift */,
+				155 /* LlamaRuntime.swift */,
+				161 /* AudarEngine.swift */,
+				164 /* IncrementalTranscriber.swift */,
+				165 /* SpeechCleanup.swift */,
+				167 /* LiveStreaming.swift */,
+				162 /* AudarModelManager.swift */,
 			);
 			path = Transcription;
 			sourceTree = "<group>";
@@ -291,6 +343,8 @@
 				114 /* PasteService.swift */,
 				115 /* PermissionService.swift */,
 				151 /* SystemAudioService.swift */,
+				163 /* LatencyLog.swift */,
+				166 /* TypingService.swift */,
 			);
 			path = System;
 			sourceTree = "<group>";
@@ -341,6 +395,17 @@
 			path = Components;
 			sourceTree = "<group>";
 		};
+		225 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				156 /* llama.xcframework */,
+				158 /* Metal.framework */,
+				159 /* Accelerate.framework */,
+				160 /* Foundation.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		901 /* Products */ = {
 			isa = PBXGroup;
 			children = (
@@ -359,6 +424,7 @@
 				701 /* Sources */,
 				800 /* Frameworks */,
 				702 /* Resources */,
+				802 /* Embed Frameworks */,
 			);
 			buildRules = (
 			);
@@ -367,8 +433,6 @@
 			name = Fluent;
 			packageProductDependencies = (
 				500 /* WhisperKit */,
-				15B0A7E82F2CF65E006AA075 /* onnxruntime */,
-				15B0A7EA2F2CF65E006AA075 /* onnxruntime_extensions */,
 				15B0A7ED2F2CF685006AA075 /* SentencepieceTokenizer */,
 			);
 			productName = Fluent;
@@ -401,7 +465,6 @@
 			mainGroup = 000;
 			packageReferences = (
 				501 /* XCRemoteSwiftPackageReference "WhisperKit" */,
-				15B0A7E72F2CF65E006AA075 /* XCRemoteSwiftPackageReference "onnxruntime-swift-package-manager" */,
 				15B0A7EC2F2CF685006AA075 /* XCRemoteSwiftPackageReference "swift-sentencepiece" */,
 			);
 			productRefGroup = 901 /* Products */;
@@ -420,7 +483,7 @@
 			files = (
 				040 /* Assets.xcassets in Resources */,
 				042 /* sound.m4a in Resources */,
-				049 /* spe_32k_lc_en.model in Resources */,
+				054 /* xlmr_punct_sp.model in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -446,6 +509,7 @@
 				014 /* PasteService.swift in Sources */,
 				015 /* PermissionService.swift in Sources */,
 				051 /* SystemAudioService.swift in Sources */,
+				063 /* LatencyLog.swift in Sources */,
 				016 /* MainWindow.swift in Sources */,
 				017 /* SidebarView.swift in Sources */,
 				018 /* HomeView.swift in Sources */,
@@ -471,9 +535,18 @@
 				041 /* SoundService.swift in Sources */,
 				043 /* ModelManager.swift in Sources */,
 				044 /* AudioConverter.swift in Sources */,
+				052 /* AudioDeviceManager.swift in Sources */,
 				046 /* TextFormattingService.swift in Sources */,
 				047 /* PunctuationModelManager.swift in Sources */,
 				050 /* ListFormattingService.swift in Sources */,
+				053 /* PunctCapSeg.mlpackage in Sources */,
+				055 /* LlamaRuntime.swift in Sources */,
+				061 /* AudarEngine.swift in Sources */,
+				064 /* IncrementalTranscriber.swift in Sources */,
+				065 /* SpeechCleanup.swift in Sources */,
+				067 /* LiveStreaming.swift in Sources */,
+				066 /* TypingService.swift in Sources */,
+				062 /* AudarModelManager.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -692,14 +765,6 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		15B0A7E72F2CF65E006AA075 /* XCRemoteSwiftPackageReference "onnxruntime-swift-package-manager" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/microsoft/onnxruntime-swift-package-manager";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 1.20.0;
-			};
-		};
 		15B0A7EC2F2CF685006AA075 /* XCRemoteSwiftPackageReference "swift-sentencepiece" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/jkrukowski/swift-sentencepiece";
@@ -719,16 +784,6 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		15B0A7E82F2CF65E006AA075 /* onnxruntime */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 15B0A7E72F2CF65E006AA075 /* XCRemoteSwiftPackageReference "onnxruntime-swift-package-manager" */;
-			productName = onnxruntime;
-		};
-		15B0A7EA2F2CF65E006AA075 /* onnxruntime_extensions */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 15B0A7E72F2CF65E006AA075 /* XCRemoteSwiftPackageReference "onnxruntime-swift-package-manager" */;
-			productName = onnxruntime_extensions;
-		};
 		15B0A7ED2F2CF685006AA075 /* SentencepieceTokenizer */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 15B0A7EC2F2CF685006AA075 /* XCRemoteSwiftPackageReference "swift-sentencepiece" */;

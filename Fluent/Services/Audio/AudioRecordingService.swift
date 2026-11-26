@@ -41,6 +41,7 @@ class AudioRecordingService: ObservableObject {
 
     private var audioEngine: AVAudioEngine?
     private var audioFile: AVAudioFile?
+    private var audioFileCreated = false
     private var recordingURL: URL?
 
     private var levelPublisher = PassthroughSubject<Float, Never>()
@@ -55,9 +56,11 @@ class AudioRecordingService: ObservableObject {
     private static let silenceThreshold: Float = 0.08
     private static let peakToAverageThreshold: Float = 1.8
 
-    // Streaming audio support for real-time transcription
+    // 16 kHz mono samples of the recording as it happens (read by IncrementalTranscriber).
     private var audioBufferContinuation: AsyncStream<[Float]>.Continuation?
     private(set) var audioStream: AsyncStream<[Float]>?
+    /// Used only on the tap thread while recording, then flushed once in `stopRecording()`.
+    private var streamResampler: StreamingResampler?
 
     init() {
         setupLevelSmoothing()
@@ -88,16 +91,27 @@ class AudioRecordingService: ObservableObject {
             throw RecordingError.microphonePermissionDenied
         }
 
+        do {
+            try await startEngine(usePreferredDevice: true)
+        } catch RecordingError.audioEngineStartFailed, RecordingError.noInputDevice {
+            // The preferred external mic refused to start (e.g. a Bluetooth headset
+            // still connecting) — fall back to the system default input.
+            try await startEngine(usePreferredDevice: false)
+        }
+    }
+
+    private func startEngine(usePreferredDevice: Bool) async throws {
         // Create audio engine
         let engine = AVAudioEngine()
+        if usePreferredDevice {
+            await AudioDeviceManager.shared.configureDevice(on: engine)
+        }
         let inputNode = engine.inputNode
 
         // Check for input device
         guard inputNode.inputFormat(forBus: 0).channelCount > 0 else {
             throw RecordingError.noInputDevice
         }
-
-        let format = inputNode.outputFormat(forBus: 0)
 
         // Create recording directory if needed
         let recordingDirectory = getRecordingDirectory()
@@ -107,55 +121,54 @@ class AudioRecordingService: ObservableObject {
         let fileName = "recording_\(Int(Date().timeIntervalSince1970)).m4a"
         recordingURL = recordingDirectory.appendingPathComponent(fileName)
 
-        guard let url = recordingURL else {
-            throw RecordingError.fileCreationFailed
-        }
-
-        // Audio settings for M4A (AAC)
-        let settings: [String: Any] = [
-            AVFormatIDKey: kAudioFormatMPEG4AAC,
-            AVSampleRateKey: format.sampleRate,
-            AVNumberOfChannelsKey: format.channelCount,
-            AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
-            AVEncoderBitRateKey: 128000
-        ]
-
-        do {
-            audioFile = try AVAudioFile(
-                forWriting: url,
-                settings: settings,
-                commonFormat: format.commonFormat,
-                interleaved: format.isInterleaved
-            )
-        } catch {
-            throw RecordingError.fileCreationFailed
-        }
-
-        // Create async stream for real-time audio samples (for streaming transcription)
+        // Async stream of 16 kHz mono samples for transcription while recording
         audioStream = AsyncStream { continuation in
             self.audioBufferContinuation = continuation
         }
+        let resampler = StreamingResampler()
+        streamResampler = resampler
 
         // Install tap for recording and level monitoring
-        inputNode.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
+        // format: nil lets AVAudioEngine use the node's native hardware format,
+        // which correctly reflects the actual device (AirPods @ 16kHz or built-in @ 48kHz)
+        audioFileCreated = false
+
+        inputNode.installTap(onBus: 0, bufferSize: 4096, format: nil) { [weak self] buffer, _ in
             guard let self = self else { return }
+
+            // Lazily create audio file on first buffer using actual hardware format
+            if self.audioFile == nil && !self.audioFileCreated {
+                self.audioFileCreated = true
+                if let url = self.recordingURL {
+                    let fmt = buffer.format
+                    let settings: [String: Any] = [
+                        AVFormatIDKey: kAudioFormatMPEG4AAC,
+                        AVSampleRateKey: fmt.sampleRate,
+                        AVNumberOfChannelsKey: fmt.channelCount,
+                        AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
+                        AVEncoderBitRateKey: 128000
+                    ]
+                    self.audioFile = try? AVAudioFile(
+                        forWriting: url,
+                        settings: settings,
+                        commonFormat: fmt.commonFormat,
+                        interleaved: fmt.isInterleaved
+                    )
+                }
+            }
 
             // Write to file
             do {
                 try self.audioFile?.write(from: buffer)
-            } catch {
-                // Silently handle buffer write errors
-            }
+            } catch {}
 
             // Calculate RMS level for waveform
             let level = self.calculateRMSLevel(buffer: buffer)
             self.levelPublisher.send(level)
-
-            // Collect levels for silence detection
             self.allLevelSamples.append(level)
 
-            // Stream PCM samples for real-time transcription
-            if let samples = self.convertToWhisperFormat(buffer: buffer, sourceFormat: format) {
+            // Stream 16 kHz mono samples for transcription while recording
+            if let samples = resampler.process(buffer), !samples.isEmpty {
                 self.audioBufferContinuation?.yield(samples)
             }
         }
@@ -179,15 +192,21 @@ class AudioRecordingService: ObservableObject {
     func stopRecording() async -> URL? {
         guard isRecording else { return nil }
 
-        // Finish the audio stream for transcription
-        audioBufferContinuation?.finish()
-        audioBufferContinuation = nil
-        audioStream = nil
-
         audioEngine?.inputNode.removeTap(onBus: 0)
         audioEngine?.stop()
         audioEngine = nil
+
+        // Finish the sample stream only now, so it carries every buffer the file got,
+        // plus the few ms still inside the resampler.
+        if let tail = streamResampler?.flush(), !tail.isEmpty {
+            audioBufferContinuation?.yield(tail)
+        }
+        streamResampler = nil
+        audioBufferContinuation?.finish()
+        audioBufferContinuation = nil
+        audioStream = nil
         audioFile = nil
+        audioFileCreated = false
 
         isRecording = false
         durationTimer?.invalidate()
@@ -251,52 +270,6 @@ class AudioRecordingService: ObservableObject {
         let peakRatio = getPeakToAverageRatio()
         // Accept if: good volume alone, OR moderate volume with some dynamic range
         return averageLevel >= Self.silenceThreshold || (averageLevel >= 0.03 && peakRatio >= 1.5)
-    }
-
-    // MARK: - Audio Format Conversion
-
-    /// Convert audio buffer to 16kHz mono Float32 for WhisperKit
-    private func convertToWhisperFormat(buffer: AVAudioPCMBuffer, sourceFormat: AVAudioFormat) -> [Float]? {
-        guard let channelData = buffer.floatChannelData?[0] else { return nil }
-        let frameLength = Int(buffer.frameLength)
-        guard frameLength > 0 else { return nil }
-
-        // Get source samples
-        var sourceSamples = [Float](repeating: 0, count: frameLength)
-        memcpy(&sourceSamples, channelData, frameLength * MemoryLayout<Float>.size)
-
-        // If stereo, convert to mono by averaging channels
-        if sourceFormat.channelCount > 1, let rightChannel = buffer.floatChannelData?[1] {
-            for i in 0..<frameLength {
-                sourceSamples[i] = (sourceSamples[i] + rightChannel[i]) / 2.0
-            }
-        }
-
-        // Resample to 16kHz if needed
-        let sourceSampleRate = sourceFormat.sampleRate
-        let targetSampleRate: Double = 16000
-
-        if abs(sourceSampleRate - targetSampleRate) < 1.0 {
-            // Already at target sample rate
-            return sourceSamples
-        }
-
-        // Simple linear interpolation resampling
-        let ratio = sourceSampleRate / targetSampleRate
-        let outputLength = Int(Double(frameLength) / ratio)
-        var outputSamples = [Float](repeating: 0, count: outputLength)
-
-        for i in 0..<outputLength {
-            let srcIndex = Double(i) * ratio
-            let srcIndexFloor = Int(srcIndex)
-            let srcIndexCeil = min(srcIndexFloor + 1, frameLength - 1)
-            let fraction = Float(srcIndex - Double(srcIndexFloor))
-
-            outputSamples[i] = sourceSamples[srcIndexFloor] * (1 - fraction) +
-                               sourceSamples[srcIndexCeil] * fraction
-        }
-
-        return outputSamples
     }
 
     // MARK: - Audio Level Calculation

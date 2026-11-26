@@ -3,7 +3,6 @@ import SwiftUI
 struct OnboardingView: View {
     @EnvironmentObject var appState: AppState
     @ObservedObject var modelManager = ModelManager.shared
-    @ObservedObject var punctuationManager = PunctuationModelManager.shared
     @State private var currentStep: Int
 
     private let totalSteps = 4
@@ -13,9 +12,10 @@ struct OnboardingView: View {
         _currentStep = State(initialValue: 0)
     }
 
-    /// Both models must be downloaded to continue past step 1
-    private var bothModelsReady: Bool {
-        modelManager.isModelDownloaded && punctuationManager.isModelDownloaded
+    /// The Whisper model must be downloaded to continue past step 1
+    /// (the punctuation model is bundled with the app)
+    private var modelReady: Bool {
+        modelManager.isModelDownloaded
     }
 
     var body: some View {
@@ -75,7 +75,7 @@ struct OnboardingView: View {
                     FluentButton("Continue", icon: "chevron.right", iconPosition: .trailing, variant: .primary) {
                         currentStep += 1
                     }
-                    .disabled(currentStep == 1 && !bothModelsReady)
+                    .disabled(currentStep == 1 && !modelReady)
                 } else {
                     FluentButton("Get Started", icon: "checkmark", variant: .primary) {
                         completeOnboarding()
@@ -84,7 +84,7 @@ struct OnboardingView: View {
             }
             .padding(FluentSpacing.cardPadding)
         }
-        .frame(width: 500, height: 600) // Slightly taller to fit both model cards
+        .frame(width: 500, height: 600)
         .background(
             RoundedRectangle(cornerRadius: FluentRadius.lg)
                 .fill(FluentColors.background)
@@ -97,10 +97,13 @@ struct OnboardingView: View {
         SettingsService.shared.isOnboardingComplete = true
         appState.showOnboarding = false
 
-        // Load both models in background after onboarding
+        // Load models in background after onboarding
         Task {
             try? await modelManager.loadModel()
-            try? await punctuationManager.loadModel()
+            if SettingsService.shared.settings.formatTextEnabled {
+                try? await PunctuationModelManager.shared.loadModel()
+            }
+            AudarModelManager.shared.loadIfConfigured()
         }
     }
 }
@@ -159,49 +162,34 @@ struct FeatureRow: View {
 
 struct ModelDownloadStep: View {
     @ObservedObject var modelManager = ModelManager.shared
-    @ObservedObject var punctuationManager = PunctuationModelManager.shared
-    @State private var isDownloading = false
 
     /// Overall status text
     private var overallStatusText: String {
-        let whisperDone = modelManager.isModelDownloaded
-        let punctDone = punctuationManager.isModelDownloaded
-
-        if whisperDone && punctDone {
-            return "Both models downloaded!"
-        } else if whisperDone {
-            return "1 of 2 models downloaded"
-        } else {
-            return "0 of 2 models downloaded"
-        }
+        modelManager.isModelDownloaded ? "Model downloaded!" : "Not downloaded yet"
     }
 
-    /// Total size description
-    private var totalSizeText: String {
-        "Total: ~350 MB"
+    /// Whether the download is in progress
+    private var isDownloading: Bool {
+        modelManager.state.isDownloading
     }
 
-    /// Whether downloads are in progress
-    private var isAnyDownloading: Bool {
-        modelManager.state.isDownloading || punctuationManager.state.isDownloading
-    }
-
-    /// Whether both are downloaded
-    private var bothDownloaded: Bool {
-        modelManager.isModelDownloaded && punctuationManager.isModelDownloaded
+    /// Whether the model is downloaded
+    private var isDownloaded: Bool {
+        modelManager.isModelDownloaded
     }
 
     var body: some View {
+        ScrollView {
         VStack(spacing: FluentSpacing.lg) {
             Image(systemName: "arrow.down.circle.fill")
-                .font(.system(size: 48))
+                .font(.system(size: 40))
                 .foregroundStyle(FluentColors.primary.gradient)
 
             VStack(spacing: FluentSpacing.sm) {
-                Text("Download Models")
+                Text("Download Model")
                     .font(.Fluent.headlineMedium)
 
-                Text("Fluent uses local AI models for transcription.\nNo internet needed after download.")
+                Text("Fluent uses a local AI model for transcription.\nNo internet needed after download.")
                     .font(.Fluent.bodyMedium)
                     .foregroundStyle(FluentColors.textSecondary)
                     .multilineTextAlignment(.center)
@@ -210,25 +198,16 @@ struct ModelDownloadStep: View {
             VStack(spacing: FluentSpacing.md) {
                 // Whisper Model Card
                 ModelDownloadCard(
-                    title: "Whisper Small Model",
+                    title: "Whisper Large v3 Turbo",
                     subtitle: "Speech recognition",
                     size: modelManager.modelSizeDescription,
                     state: whisperCardState,
                     progress: modelManager.downloadProgress
                 )
 
-                // Punctuation Model Card
-                ModelDownloadCard(
-                    title: "Punctuation Model",
-                    subtitle: "Adds punctuation & capitalization",
-                    size: punctuationManager.modelSizeDescription,
-                    state: punctuationCardState,
-                    progress: punctuationManager.downloadProgress
-                )
-
                 // Overall status
                 HStack {
-                    Text(totalSizeText)
+                    Text("Punctuation is built in")
                         .font(.Fluent.caption)
                         .foregroundStyle(FluentColors.textTertiary)
 
@@ -236,42 +215,26 @@ struct ModelDownloadStep: View {
 
                     Text(overallStatusText)
                         .font(.Fluent.caption)
-                        .foregroundStyle(bothDownloaded ? FluentColors.success : FluentColors.textSecondary)
+                        .foregroundStyle(isDownloaded ? FluentColors.success : FluentColors.textSecondary)
                 }
 
                 // Action button
                 downloadActionButton
+
+                // Optional, recommended Arabic engine (Continue never waits for it)
+                AudarOnboardingCard()
             }
             .frame(maxWidth: 380)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity)
         .padding(FluentSpacing.cardPadding)
+        }
     }
 
-    // MARK: - Card States
+    // MARK: - Card State
 
     private var whisperCardState: ModelCardState {
         switch modelManager.state {
-        case .notDownloaded:
-            return .waiting
-        case .downloading(let progress):
-            return .downloading(progress: progress)
-        case .retrying(let attempt, let max):
-            return .retrying(attempt: attempt, maxAttempts: max)
-        case .downloaded, .loading, .ready:
-            return .completed
-        case .error(let msg):
-            return .error(message: msg)
-        }
-    }
-
-    private var punctuationCardState: ModelCardState {
-        // Punctuation waits for Whisper to complete first
-        if !modelManager.isModelDownloaded && !punctuationManager.state.isDownloading {
-            return .waiting
-        }
-
-        switch punctuationManager.state {
         case .notDownloaded:
             return .waiting
         case .downloading(let progress):
@@ -289,52 +252,137 @@ struct ModelDownloadStep: View {
 
     @ViewBuilder
     private var downloadActionButton: some View {
-        if bothDownloaded {
+        if isDownloaded {
             HStack(spacing: FluentSpacing.xs) {
                 Image(systemName: "checkmark.circle.fill")
-                Text("Downloads Complete")
+                Text("Download Complete")
             }
             .font(.Fluent.bodyMedium)
             .foregroundStyle(FluentColors.success)
-        } else if isAnyDownloading {
+        } else if isDownloading {
             FluentButton("Cancel", icon: "xmark", variant: .secondary) {
-                cancelAllDownloads()
+                modelManager.cancelDownload()
             }
         } else {
-            FluentButton("Download Both Models", icon: "arrow.down.circle", variant: .primary) {
+            FluentButton("Download Model", icon: "arrow.down.circle", variant: .primary) {
                 Task {
-                    await downloadBothModels()
+                    try? await modelManager.downloadModel()
                 }
             }
         }
     }
+}
 
-    // MARK: - Download Actions
+// MARK: - Audar Card
 
-    private func downloadBothModels() async {
-        // Sequential download: Whisper first, then Punctuation
-        if !modelManager.isModelDownloaded {
-            do {
-                try await modelManager.downloadModel()
-            } catch {
-                // Stop if Whisper fails
-                return
+/// Optional Arabic engine on the download step: license checkbox + its own download.
+struct AudarOnboardingCard: View {
+    @ObservedObject var audarManager = AudarModelManager.shared
+    @ObservedObject var settingsService = SettingsService.shared
+
+    private var licenseAccepted: Bool { settingsService.settings.audarLicenseAccepted }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: FluentSpacing.sm) {
+            HStack(spacing: FluentSpacing.md) {
+                Image(systemName: statusIcon)
+                    .font(.title2)
+                    .foregroundStyle(statusColor)
+                    .frame(width: 30)
+
+                VStack(alignment: .leading, spacing: FluentSpacing.xxs) {
+                    HStack(spacing: FluentSpacing.xs) {
+                        FluentBadge("Recommended", variant: .info)
+                        FluentBadge("Optional", variant: .neutral)
+                    }
+                    Text("Audar Arabic model (best for Arabic dialects)")
+                        .font(.Fluent.titleSmall)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(statusText)
+                        .font(.Fluent.caption)
+                        .foregroundStyle(FluentColors.textSecondary)
+                        .lineLimit(2)
+                }
+
+                Spacer()
+
+                Text(audarManager.modelSizeDescription)
+                    .font(.Fluent.monoSmall)
+                    .foregroundStyle(FluentColors.textTertiary)
+            }
+
+            if case .downloading(let progress) = audarManager.state {
+                ProgressView(value: progress)
+                    .progressViewStyle(.linear)
+            }
+
+            if !audarManager.isModelDownloaded {
+                AudarLicenseView()
+            }
+
+            HStack {
+                Spacer()
+                actionButton
             }
         }
+        .padding(FluentSpacing.cardPadding)
+        .background(
+            RoundedRectangle(cornerRadius: FluentRadius.md)
+                .fill(FluentColors.surface)
+        )
+    }
 
-        if !punctuationManager.isModelDownloaded {
-            do {
-                try await punctuationManager.downloadModel()
-            } catch {
-                // Punctuation failed but Whisper succeeded
-                return
-            }
+    private var statusIcon: String {
+        switch audarManager.state {
+        case .downloaded, .loading, .ready: return "checkmark.circle.fill"
+        case .error: return "exclamationmark.circle"
+        default: return "arrow.down.circle"
         }
     }
 
-    private func cancelAllDownloads() {
-        modelManager.cancelDownload()
-        punctuationManager.cancelDownload()
+    private var statusColor: Color {
+        switch audarManager.state {
+        case .downloaded, .loading, .ready: return FluentColors.success
+        case .downloading, .retrying: return FluentColors.primary
+        case .error: return FluentColors.error
+        case .notDownloaded: return FluentColors.textTertiary
+        }
+    }
+
+    private var statusText: String {
+        switch audarManager.state {
+        case .notDownloaded:
+            return licenseAccepted ? "Not downloaded" : "Accept the license to download"
+        case .downloading(let progress):
+            return "Downloading... \(Int(progress * 100))%"
+        case .retrying(let attempt, let max):
+            return "Retrying (\(attempt)/\(max))..."
+        case .downloaded, .loading, .ready:
+            return "Downloaded"
+        case .error(let message):
+            return message
+        }
+    }
+
+    @ViewBuilder
+    private var actionButton: some View {
+        if audarManager.isModelDownloaded {
+            HStack(spacing: FluentSpacing.xs) {
+                Image(systemName: "checkmark.circle.fill")
+                Text("Download Complete")
+            }
+            .font(.Fluent.caption)
+            .foregroundStyle(FluentColors.success)
+        } else if audarManager.state.isDownloading {
+            FluentButton("Cancel", icon: "xmark", variant: .secondary, size: .small) {
+                audarManager.cancelDownload()
+            }
+        } else {
+            FluentButton("Download Audar", icon: "arrow.down.circle", variant: .secondary, size: .small) {
+                Task { try? await audarManager.downloadModel() }
+            }
+            .disabled(!licenseAccepted)
+        }
     }
 }
 

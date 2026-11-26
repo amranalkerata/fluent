@@ -74,7 +74,11 @@ class ModelManager: ObservableObject {
     private var downloadTask: Task<Void, Error>?
 
     // WhisperKit model configuration
-    private let modelName = "small"  // Options: tiny, base, small, medium, large
+    // OpenAI Whisper large-v3-turbo (Sept 2024 release), ~626 MB Core ML variant.
+    // Much better Arabic accuracy than `small`; officially supported on M-series Macs.
+    private let modelName = "large-v3-v20240930_626MB"
+    /// Folder of the model used by earlier versions, removed after upgrading
+    private let legacyModelFolderName = "openai_whisper-small"
     private let modelRepo = "argmaxinc/whisperkit-coreml"
 
     // Retry configuration
@@ -83,6 +87,9 @@ class ModelManager: ObservableObject {
 
     private init() {
         checkModelExists()
+        if isModelDownloaded {
+            removeLegacyModel()
+        }
     }
 
     // MARK: - Model Directory
@@ -94,6 +101,13 @@ class ModelManager: ObservableObject {
 
     private var modelPath: URL {
         modelsDirectory.appendingPathComponent("openai_whisper-\(modelName)")
+    }
+
+    /// Best-effort removal of the old `small` model folder to free disk space
+    private func removeLegacyModel() {
+        let legacyPath = modelsDirectory.appendingPathComponent(legacyModelFolderName)
+        guard FileManager.default.fileExists(atPath: legacyPath.path) else { return }
+        try? FileManager.default.removeItem(at: legacyPath)
     }
 
     // MARK: - State Check
@@ -186,10 +200,19 @@ class ModelManager: ObservableObject {
                         at: modelFolder,
                         to: destinationPath
                     )
+                    // The app loads from destinationPath only, so drop WhisperKit's
+                    // download cache copy (and the old `small` one next to it)
+                    // instead of keeping every model twice on disk.
+                    try? FileManager.default.removeItem(at: modelFolder)
+                    try? FileManager.default.removeItem(
+                        at: modelFolder.deletingLastPathComponent()
+                            .appendingPathComponent(legacyModelFolderName)
+                    )
                 }
 
                 state = .downloaded
                 downloadProgress = 1.0
+                removeLegacyModel()
                 return // Success - exit retry loop
 
             } catch is CancellationError {
@@ -264,7 +287,8 @@ class ModelManager: ObservableObject {
 
     // MARK: - Transcription
 
-    func transcribe(samples: [Float], language: String?) async throws -> String {
+    /// `withoutTimestamps` skips Whisper's timestamp tokens (a faster pass with the same words).
+    func transcribe(samples: [Float], language: String?, withoutTimestamps: Bool = false) async throws -> String {
         guard state.isReady, let whisperKit else {
             throw ModelError.modelNotDownloaded
         }
@@ -284,6 +308,7 @@ class ModelManager: ObservableObject {
                 usePrefillPrompt: true,        // Always enable to inject <|transcribe|> task token
                 usePrefillCache: true,         // Cache prefill for consistency across chunks
                 detectLanguage: language == nil,  // Auto-detect only if no explicit language
+                withoutTimestamps: withoutTimestamps,
                 clipTimestamps: [0],  // Ensure processing starts from beginning
                 suppressBlank: true,
                 supressTokens: nil,
@@ -305,6 +330,21 @@ class ModelManager: ObservableObject {
         } catch {
             throw ModelError.transcriptionFailed(error.localizedDescription)
         }
+    }
+
+    /// Spoken language of the first 30 s of `samples` (one Whisper encoder pass + one decoder step).
+    /// - Returns: the Whisper language code (e.g. "ar", "en") and its probability among all languages.
+    func detectLanguage(samples: [Float]) async throws -> (language: String, confidence: Float) {
+        guard state.isReady, let whisperKit else {
+            throw ModelError.modelNotDownloaded
+        }
+        // WhisperKit 0.15 spells the audio-array variant `detectLangauge`.
+        let result = try await whisperKit.detectLangauge(audioArray: samples)
+        // langProbs holds the log-probability of the sampled language token (softmax over
+        // language tokens only). If WhisperKit replaced an unsupported code with its default,
+        // the code is missing here and the confidence is 0.
+        let logProbability = result.langProbs[result.language] ?? -.infinity
+        return (result.language, exp(logProbability))
     }
 
     /// Streaming transcription - transcribes audio chunks and provides partial results
@@ -400,7 +440,7 @@ class ModelManager: ObservableObject {
     // MARK: - Model Info
 
     var modelSizeDescription: String {
-        "~150 MB"  // Core ML optimized model
+        "~630 MB"  // Core ML optimized model
     }
 
     var isModelDownloaded: Bool {

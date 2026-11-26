@@ -26,7 +26,7 @@ Fluent is a lightweight, native macOS app that turns your voice into text instan
 
 - **macOS 14.0** (Sonoma) or later
 - **Apple Silicon or Intel Mac** — Core ML optimized for best performance
-- **~350 MB disk space** — For AI models (downloaded during setup)
+- **~630 MB disk space** — For AI models (downloaded during setup)
 - **Microphone Permission** — For voice recording
 - **Input Monitoring Permission** — For global keyboard shortcuts
 
@@ -71,7 +71,7 @@ During the onboarding process, Fluent will download the required AI models:
 
 1. **Welcome** — Introduction to Fluent
 2. **Permissions** — Grant microphone and input monitoring access
-3. **Model Download** — WhisperKit transcription model (~350 MB) downloads automatically
+3. **Model Download** — WhisperKit transcription model (~630 MB) downloads automatically
 4. **Ready** — You're all set to start dictating
 
 > Models are downloaded once and stored locally. No internet connection is required after initial setup.
@@ -192,7 +192,7 @@ Fluent/
 ### Model download fails
 
 1. Verify you have an active internet connection
-2. Check available disk space (~350 MB required)
+2. Check available disk space (~630 MB required)
 3. Try restarting Fluent to resume the download
 4. Check Console.app for detailed error messages
 

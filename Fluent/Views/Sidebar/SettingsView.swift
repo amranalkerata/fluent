@@ -14,6 +14,12 @@ struct SettingsView: View {
                 }
                 .fluentAppear(delay: 0)
 
+                // Speech Engine Section (offline Arabic engine)
+                FluentSettingsSection("Speech Engine", icon: "waveform") {
+                    AudarSettingsCard()
+                }
+                .fluentAppear(delay: 0.025)
+
                 // Transcription Section
                 FluentSettingsSection("Transcription", icon: "text.bubble") {
                     TranscriptionSettingsCard()
@@ -56,7 +62,7 @@ struct SettingsView: View {
                 settingsService.resetAllSettings()
             }
         } message: {
-            Text("This will reset all settings to their default values. The downloaded model will not be affected.")
+            Text("This will reset all settings to their default values, including the AudarAI license acceptance. Downloaded models will not be affected.")
         }
     }
 }
@@ -79,7 +85,7 @@ struct ModelSettingsCard: View {
                     )
 
                 VStack(alignment: .leading, spacing: FluentSpacing.xxs) {
-                    Text("Whisper Small Model")
+                    Text("Whisper Large v3 Turbo")
                         .font(.Fluent.titleSmall)
 
                     Text(statusText)
@@ -122,7 +128,7 @@ struct ModelSettingsCard: View {
                             .font(.Fluent.caption)
                             .foregroundStyle(FluentColors.textSecondary)
 
-                        Text("Small model - Better accuracy for multilingual")
+                        Text("Large v3 Turbo - High accuracy for Arabic and multilingual")
                             .font(.Fluent.caption)
                             .foregroundStyle(FluentColors.textTertiary)
                     }
@@ -222,6 +228,251 @@ struct ModelSettingsCard: View {
     }
 }
 
+struct AudarSettingsCard: View {
+    @ObservedObject var audarManager = AudarModelManager.shared
+    @ObservedObject var settingsService = SettingsService.shared
+    @State private var showingDeleteConfirmation = false
+
+    private var licenseAccepted: Bool { settingsService.settings.audarLicenseAccepted }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: FluentSpacing.md) {
+            HStack(spacing: FluentSpacing.md) {
+                Image(systemName: statusIcon)
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(statusColor)
+                    .frame(width: 32, height: 32)
+                    .background(
+                        RoundedRectangle(cornerRadius: FluentRadius.sm)
+                            .fill(statusColor.opacity(0.12))
+                    )
+
+                VStack(alignment: .leading, spacing: FluentSpacing.xxs) {
+                    HStack(spacing: FluentSpacing.xs) {
+                        Text("Audar ASR V1 Turbo")
+                            .font(.Fluent.titleSmall)
+                        FluentBadge("Arabic", variant: .info)
+                    }
+
+                    Text(statusText)
+                        .font(.Fluent.caption)
+                        .foregroundStyle(FluentColors.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer()
+
+                actionButton
+            }
+
+            if case .downloading(let progress) = audarManager.state {
+                VStack(spacing: FluentSpacing.xs) {
+                    ProgressView(value: progress)
+                        .progressViewStyle(.linear)
+
+                    HStack {
+                        Text("\(Int(progress * 100))%")
+                            .font(.Fluent.monoSmall)
+                            .foregroundStyle(FluentColors.textSecondary)
+
+                        Spacer()
+
+                        Text(audarManager.modelSizeDescription)
+                            .font(.Fluent.caption)
+                            .foregroundStyle(FluentColors.textSecondary)
+                    }
+                }
+            }
+
+            Text("Offline Arabic model, best for Arabic dialects. When the language is Arabic, or Auto-detect hears Arabic, Fluent uses Audar. Other languages use Whisper.")
+                .font(.Fluent.caption)
+                .foregroundStyle(FluentColors.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if audarManager.isModelDownloaded {
+                FluentDivider(inset: true)
+
+                FluentToggle(
+                    title: "Use Audar for Arabic",
+                    description: "Whisper is used until Audar has loaded",
+                    isOn: $settingsService.settings.audarEnabled
+                )
+            }
+
+            FluentDivider(inset: true)
+
+            AudarLicenseView()
+
+            FluentDivider(inset: true)
+
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: FluentSpacing.xxs) {
+                    Text(AudarModelManager.attribution)
+                        .font(.Fluent.caption)
+                        .foregroundStyle(FluentColors.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Link(destination: URL(string: AudarModelManager.repositoryURL)!) {
+                        HStack(spacing: FluentSpacing.xs) {
+                            Image(systemName: "link")
+                            Text("Model page")
+                        }
+                        .font(.Fluent.caption)
+                    }
+                }
+
+                Spacer()
+
+                if audarManager.isModelDownloaded {
+                    FluentButton("Delete", icon: "trash", variant: .destructive, size: .small) {
+                        showingDeleteConfirmation = true
+                    }
+                }
+            }
+        }
+        .alert("Delete Audar Model?", isPresented: $showingDeleteConfirmation) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete", role: .destructive) {
+                audarManager.deleteModel()
+            }
+        } message: {
+            Text("This frees about 2.8 GB. Fluent will use Whisper for Arabic until you download Audar again.")
+        }
+    }
+
+    private var statusIcon: String {
+        switch audarManager.state {
+        case .notDownloaded, .downloading, .retrying:
+            return "arrow.down.circle"
+        case .downloaded:
+            return "checkmark.circle"
+        case .loading:
+            return "arrow.clockwise.circle"
+        case .ready:
+            return "checkmark.circle.fill"
+        case .error:
+            return "exclamationmark.circle.fill"
+        }
+    }
+
+    private var statusColor: Color {
+        switch audarManager.state {
+        case .notDownloaded:
+            return FluentColors.textSecondary
+        case .downloading, .retrying, .loading:
+            return FluentColors.primary
+        case .downloaded, .ready:
+            return FluentColors.success
+        case .error:
+            return FluentColors.error
+        }
+    }
+
+    private var statusText: String {
+        switch audarManager.state {
+        case .notDownloaded:
+            return licenseAccepted
+                ? "Not downloaded (\(audarManager.modelSizeDescription))"
+                : "Accept the license below to download (\(audarManager.modelSizeDescription))"
+        case .downloading:
+            return "Downloading..."
+        case .retrying(let attempt, let maxAttempts):
+            return "Retrying download (\(attempt)/\(maxAttempts))..."
+        case .downloaded:
+            if !licenseAccepted { return "Downloaded - accept the license to use it" }
+            if !settingsService.settings.audarEnabled { return "Downloaded - switched off" }
+            return "Downloaded - not loaded yet"
+        case .loading:
+            return "Loading model..."
+        case .ready:
+            return "Ready for Arabic transcription"
+        case .error(let message):
+            return "Error: \(message)"
+        }
+    }
+
+    @ViewBuilder
+    private var actionButton: some View {
+        switch audarManager.state {
+        case .notDownloaded:
+            downloadButton
+        case .error:
+            if audarManager.isModelDownloaded {
+                FluentButton("Retry", icon: "arrow.clockwise", variant: .primary) {
+                    audarManager.retryLoad()
+                }
+            } else {
+                downloadButton
+            }
+        case .downloading, .retrying:
+            FluentButton("Cancel", icon: "xmark", variant: .secondary) {
+                audarManager.cancelDownload()
+            }
+        case .downloaded:
+            if audarManager.isConfigured {
+                FluentButton("Load", icon: "play.fill", variant: .primary) {
+                    Task { try? await audarManager.loadModel() }
+                }
+            }
+        case .loading:
+            ProgressView()
+                .controlSize(.small)
+        case .ready:
+            FluentStatusBadge(variant: .success)
+        }
+    }
+
+    private var downloadButton: some View {
+        FluentButton("Download", icon: "arrow.down.circle", variant: .primary) {
+            Task { try? await audarManager.downloadModel() }
+        }
+        .disabled(!licenseAccepted)
+        .help(licenseAccepted ? "Download from AudarAI (~2.8 GB)" : "Accept the AudarAI Community License first")
+    }
+}
+
+/// License summary, link and acceptance checkbox for the Audar model.
+/// Acceptance (with its date) is stored in AppSettings and required before any download.
+struct AudarLicenseView: View {
+    @ObservedObject var settingsService = SettingsService.shared
+
+    private var accepted: Binding<Bool> {
+        Binding(
+            get: { settingsService.settings.audarLicenseAccepted },
+            set: { settingsService.settings.audarLicenseAcceptedAt = $0 ? Date() : nil }
+        )
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: FluentSpacing.sm) {
+            Text(AudarModelManager.licenseSummary)
+                .font(.Fluent.caption)
+                .foregroundStyle(FluentColors.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Link(destination: AudarModelManager.licenseURL) {
+                HStack(spacing: FluentSpacing.xs) {
+                    Image(systemName: "doc.text")
+                    Text("Read the AudarAI Community License")
+                }
+                .font(.Fluent.caption)
+            }
+
+            Toggle(isOn: accepted) {
+                Text("I accept the AudarAI Community License")
+                    .font(.Fluent.caption)
+            }
+            .toggleStyle(.checkbox)
+
+            if let date = settingsService.settings.audarLicenseAcceptedAt {
+                Text("Accepted on \(date.formatted(date: .abbreviated, time: .omitted))")
+                    .font(.Fluent.caption)
+                    .foregroundStyle(FluentColors.textTertiary)
+            }
+        }
+    }
+}
+
 struct TranscriptionSettingsCard: View {
     @ObservedObject var settingsService = SettingsService.shared
     @ObservedObject var punctuationManager = PunctuationModelManager.shared
@@ -261,57 +512,46 @@ struct TranscriptionSettingsCard: View {
                 PunctuationModelRow(punctuationManager: punctuationManager)
             }
 
+            FluentDivider(inset: true)
+
+            FluentToggle(
+                title: "Clean Up Speech",
+                description: "Remove stutters, repeats and filler sounds",
+                isOn: $settingsService.settings.cleanupEnabled
+            )
+
+            FluentDivider(inset: true)
+
+            FluentToggle(
+                title: "Type While You Speak",
+                description: "Arabic dictation appears in the text field as you talk, a phrase at a time, instead of all at once when you stop",
+                isOn: $settingsService.settings.liveTypingEnabled
+            )
+
         }
     }
 }
 
 struct PunctuationModelRow: View {
     @ObservedObject var punctuationManager: PunctuationModelManager
-    @State private var showingDeleteConfirmation = false
 
     var body: some View {
-        VStack(spacing: FluentSpacing.sm) {
-            HStack(spacing: FluentSpacing.sm) {
-                // Status icon
-                Image(systemName: statusIcon)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(statusColor)
+        HStack(spacing: FluentSpacing.sm) {
+            Image(systemName: statusIcon)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(statusColor)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Punctuation Model")
-                        .font(.Fluent.caption)
-                        .foregroundStyle(FluentColors.textSecondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Punctuation Model")
+                    .font(.Fluent.caption)
+                    .foregroundStyle(FluentColors.textSecondary)
 
-                    Text(statusText)
-                        .font(.Fluent.monoSmall)
-                        .foregroundStyle(FluentColors.textTertiary)
-                }
-
-                Spacer()
-
-                actionButton
+                Text(statusText)
+                    .font(.Fluent.monoSmall)
+                    .foregroundStyle(FluentColors.textTertiary)
             }
 
-            // Progress bar when downloading
-            if case .downloading(let progress) = punctuationManager.state {
-                ProgressView(value: progress)
-                    .progressViewStyle(.linear)
-            }
-
-            // Delete button when downloaded
-            if punctuationManager.isModelDownloaded {
-                HStack {
-                    Text(punctuationManager.modelSizeDescription)
-                        .font(.Fluent.monoSmall)
-                        .foregroundStyle(FluentColors.textTertiary)
-
-                    Spacer()
-
-                    FluentButton("Delete", icon: "trash", variant: .destructive, size: .small) {
-                        showingDeleteConfirmation = true
-                    }
-                }
-            }
+            Spacer()
         }
         .padding(.horizontal, FluentSpacing.sm)
         .padding(.vertical, FluentSpacing.xs)
@@ -319,92 +559,21 @@ struct PunctuationModelRow: View {
             RoundedRectangle(cornerRadius: FluentRadius.sm)
                 .fill(FluentColors.surfaceSecondary)
         )
-        .alert("Delete Punctuation Model?", isPresented: $showingDeleteConfirmation) {
-            Button("Cancel", role: .cancel) { }
-            Button("Delete", role: .destructive) {
-                punctuationManager.deleteModel()
-            }
-        } message: {
-            Text("This will delete the punctuation model (~200 MB). Text formatting will be disabled until you re-download it.")
-        }
     }
 
     private var statusIcon: String {
-        switch punctuationManager.state {
-        case .notDownloaded:
-            return "arrow.down.circle"
-        case .downloading, .retrying:
-            return "arrow.down.circle"
-        case .downloaded:
-            return "checkmark.circle"
-        case .loading:
-            return "arrow.clockwise.circle"
-        case .ready:
-            return "checkmark.circle.fill"
-        case .error:
-            return "exclamationmark.circle.fill"
-        }
+        punctuationManager.state.isError ? "exclamationmark.circle.fill" : "checkmark.circle.fill"
     }
 
     private var statusColor: Color {
-        switch punctuationManager.state {
-        case .notDownloaded:
-            return FluentColors.warning
-        case .downloading, .retrying, .loading:
-            return FluentColors.primary
-        case .downloaded, .ready:
-            return FluentColors.success
-        case .error:
-            return FluentColors.error
-        }
+        punctuationManager.state.isError ? FluentColors.error : FluentColors.success
     }
 
     private var statusText: String {
-        switch punctuationManager.state {
-        case .notDownloaded:
-            return "Not downloaded"
-        case .downloading(let progress):
-            return "Downloading... \(Int(progress * 100))%"
-        case .retrying(let attempt, let max):
-            return "Retrying (\(attempt)/\(max))..."
-        case .downloaded:
-            return "Downloaded - tap Load"
-        case .loading:
-            return "Loading..."
-        case .ready:
-            return "Ready"
-        case .error(let message):
+        if case .error(let message) = punctuationManager.state {
             return "Error: \(message)"
         }
-    }
-
-    @ViewBuilder
-    private var actionButton: some View {
-        switch punctuationManager.state {
-        case .notDownloaded, .error:
-            FluentButton("Download", icon: "arrow.down.circle", variant: .primary, size: .small) {
-                Task {
-                    try? await punctuationManager.downloadModel()
-                }
-            }
-        case .downloading, .retrying:
-            FluentButton("Cancel", icon: "xmark", variant: .secondary, size: .small) {
-                punctuationManager.cancelDownload()
-            }
-        case .downloaded:
-            FluentButton("Load", icon: "play.fill", variant: .primary, size: .small) {
-                Task {
-                    try? await punctuationManager.loadModel()
-                }
-            }
-        case .loading:
-            ProgressView()
-                .controlSize(.small)
-        case .ready:
-            FluentButton("Unload", variant: .secondary, size: .small) {
-                punctuationManager.unloadModel()
-            }
-        }
+        return punctuationManager.modelSummary
     }
 }
 
