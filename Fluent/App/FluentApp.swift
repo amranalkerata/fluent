@@ -85,6 +85,16 @@ struct FluentApp: App {
 ///   Fluent.app/Contents/MacOS/Fluent --punctuation-selftest "some text"
 /// Prints the formatted result (same TextFormattingService path, formatting forced on) and exits.
 enum PunctuationSelfTest {
+    /// Ends a self-test without running C++ static destructors. llama.cpp's Metal backend
+    /// asserts at teardown while the Audar model is still loaded (the app unloads it in
+    /// `applicationWillTerminate`; the self-tests keep it to the end), so a plain `exit` turned
+    /// every self-test that loaded Audar into a crash report. Every `exit` below resolves here.
+    private static func exit(_ code: Int32) -> Never {
+        fflush(stdout)
+        fflush(stderr)
+        _exit(code)
+    }
+
     static func runIfRequested() {
         let arguments = CommandLine.arguments
         if arguments.contains("--audio-device-selftest") {
@@ -640,11 +650,15 @@ enum PunctuationSelfTest {
                         let start = LatencyLog.now()
                         let result = try await whisper.detectLanguage(samples: Array(samples.prefix(min(end, 30 * 16_000))))
                         let ms = LatencyLog.ms(since: start)
-                        // The in-recording rule of IncrementalTranscriber.recordDetection (first run).
-                        let arabic = TranscriptionService.isArabicLike(result.language)
-                        let outcome = !arabic && result.confidence >= IncrementalTranscriber.otherLanguageConfidence
-                            ? "abandon"
-                            : (arabic && result.confidence >= TranscriptionService.minimumDetectionConfidence ? "settle" : "hold")
+                        // The in-recording rule of IncrementalTranscriber.languageDecision, as a first
+                        // detection: "hold" on a sure other language means a second one must agree.
+                        let outcome: String
+                        switch IncrementalTranscriber.languageDecision(result, previous: nil, coversWholeRecording: false) {
+                        case .settleArabic: outcome = "settle"
+                        case .switchTo: outcome = "switch"
+                        case .hold: outcome = result.confidence >= IncrementalTranscriber.otherLanguageConfidence
+                            && !TranscriptionService.isArabicLike(result.language) ? "hold_other" : "hold"
+                        }
                         outcomes[threshold, default: [:]][outcome, default: 0] += 1
                         times[threshold, default: []].append(ms)
                         print([url.lastPathComponent, "\(threshold)", String(format: "%.2f", Double(end) / 16_000),
@@ -1328,6 +1342,31 @@ enum PunctuationSelfTest {
                 && LiveTyping.part(after: "كلمة", .init(punctuation: "،", text: "تالية")) == "، تالية"
                 && LiveTyping.part(after: "كلمة", .init(punctuation: "؟", text: "")) == "؟"
                 && LiveTyping.part(after: "", .init(punctuation: "", text: "بداية")) == "بداية")
+
+        // Auto-detect: leaving Arabic takes two detections that agree (one early English word
+        // inside Arabic speech must not move the recording to English); Arabic settles at once.
+        do {
+            typealias D = IncrementalTranscriber.LanguageDecision
+            let decide = IncrementalTranscriber.languageDecision
+            let cases: [(String, (String, Float), (language: String, confidence: Float)?, Bool, D)] = [
+                ("arabic sure settles", ("ar", 0.8), nil, false, .settleArabic),
+                ("arabic-like (fa) settles", ("fa", 0.7), nil, false, .settleArabic),
+                ("first english guess waits for a second", ("en", 0.97), nil, false, .hold),
+                ("unsure first guess waits", ("ar", 0.4), nil, false, .hold),
+                ("second guess agrees on english", ("en", 0.95), ("en", 0.97), false, .switchTo("en")),
+                ("second guess agrees after an unsure first", ("en", 0.95), ("en", 0.7), false, .switchTo("en")),
+                ("second guess says arabic: stays arabic", ("ar", 0.5), ("en", 0.97), false, .settleArabic),
+                ("second guess unsure english: stays arabic", ("en", 0.8), ("en", 0.97), false, .settleArabic),
+                ("second guess another language: stays arabic", ("de", 0.95), ("en", 0.97), false, .settleArabic),
+                ("stop, english guess not confirmed: stays arabic", ("ar", 0.3), ("en", 0.97), true, .settleArabic),
+                ("stop, whole short recording is english", ("en", 0.96), nil, true, .switchTo("en")),
+                ("stop, whole short recording unsure", ("en", 0.7), nil, true, .settleArabic),
+            ]
+            for (name, current, previous, whole, expected) in cases {
+                let got = decide((language: current.0, confidence: current.1), previous, whole)
+                check("language: \(name)", got == expected, "\(got)")
+            }
+        }
 
         print("\(total - failures)/\(total) passed")
         fflush(stdout)

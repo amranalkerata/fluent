@@ -326,11 +326,13 @@ actor IncrementalTranscriber {
     /// the first detection is early. Measured with `--detect-prefix-selftest` (17 Arabic dialect
     /// clips, 6 English): after 1 s of speech English came back ≥ 0.98 sure every time, while
     /// Arabic misread as another language never passed 0.77 (one of the user's own clips read
-    /// as English at 0.62, above `minimumDetectionConfidence`).
+    /// as English at 0.62, above `minimumDetectionConfidence`). In real use an Arabic sentence
+    /// that opens with an English word can still read as English ≥ 0.9 after 1 s, so the first
+    /// detection can only settle Arabic; leaving Arabic needs the second to agree.
     private static let detectionSpeechSeconds = 1.0
     private static let redetectionSpeechSeconds = 2.5
-    /// A detection moves the recording from Audar to Whisper only when it is this sure the
-    /// speech is another language.
+    /// Detections move the recording from Audar to Whisper only when they are this sure the
+    /// speech is another language (see `languageDecision`).
     static let otherLanguageConfidence: Float = 0.9
     /// Whisper reads at most the first 30 s.
     private static let detectionMaxSamples = 30 * SpeechSegmenter.sampleRate
@@ -367,8 +369,8 @@ actor IncrementalTranscriber {
         }
     }
 
-    /// Audar for Arabic; auto mode moves to Whisper when a detection is sure the speech is
-    /// another language (`otherLanguageConfidence`).
+    /// Audar for Arabic; auto mode moves to Whisper when two detections agree the speech is
+    /// another language (`languageDecision`).
     private var engine: Engine
     /// Bumped when the engine changes: runs queued for the previous engine are dropped.
     private var generation = 0
@@ -719,10 +721,10 @@ actor IncrementalTranscriber {
         default:
             return
         }
-        startDetection()
+        startDetection(coversWholeRecording: false)
     }
 
-    private func startDetection() {
+    private func startDetection(coversWholeRecording: Bool) {
         detectionRuns += 1
         let audio = Array(samples.prefix(Self.detectionMaxSamples))
         detectionTask = Task { [weak self] in
@@ -734,11 +736,42 @@ actor IncrementalTranscriber {
             } catch {
                 result = nil
             }
-            await self?.recordDetection(result, ms: LatencyLog.ms(since: start))
+            await self?.recordDetection(result, coversWholeRecording: coversWholeRecording, ms: LatencyLog.ms(since: start))
         }
     }
 
-    private func recordDetection(_ result: (language: String, confidence: Float)?, ms: Double) {
+    /// What one detection does to the recording.
+    enum LanguageDecision: Equatable {
+        /// Audar keeps the recording; live typing starts.
+        case settleArabic
+        /// Whisper transcribes the recording in this language.
+        case switchTo(String)
+        /// Wait for the next detection.
+        case hold
+    }
+
+    /// Arabic settles on one detection. Leaving Arabic takes two that agree on the language,
+    /// the second sure of it (`otherLanguageConfidence`): after 1 s of speech Whisper hears a
+    /// word or two, and one English word inside Arabic speech ("OK", a name, an app) read as
+    /// English ≥ 0.9 used to send the whole recording to English. A single detection is enough
+    /// only when it covers the whole recording (stopped before the second detection could run
+    /// on its own, with no earlier one). The second detection, or the one at stop, is the last:
+    /// anything it does not confirm stays on Audar.
+    static func languageDecision(_ result: (language: String, confidence: Float),
+                                 previous: (language: String, confidence: Float)?,
+                                 coversWholeRecording: Bool) -> LanguageDecision {
+        if TranscriptionService.isArabicLike(result.language) && result.confidence >= TranscriptionService.minimumDetectionConfidence {
+            return .settleArabic
+        }
+        let sureOther = !TranscriptionService.isArabicLike(result.language) && result.confidence >= otherLanguageConfidence
+        if sureOther {
+            if let previous, previous.language == result.language { return .switchTo(result.language) }
+            if previous == nil && coversWholeRecording { return .switchTo(result.language) }
+        }
+        return previous != nil || coversWholeRecording ? .settleArabic : .hold
+    }
+
+    private func recordDetection(_ result: (language: String, confidence: Float)?, coversWholeRecording: Bool, ms: Double) {
         detectionTask = nil
         detectionMs = ms
         LatencyLog.log("rec.detect", ms: ms)
@@ -746,13 +779,16 @@ actor IncrementalTranscriber {
             abandon("detection failed")
             return
         }
+        let previous = detection
         detection = result
-        let arabic = TranscriptionService.isArabicLike(result.language)
-        if !arabic && result.confidence >= Self.otherLanguageConfidence {
-            switchToWhisper(language: result.language)
-        } else if (arabic && result.confidence >= TranscriptionService.minimumDetectionConfidence) || detectionRuns >= 2 {
+        switch Self.languageDecision(result, previous: previous, coversWholeRecording: coversWholeRecording) {
+        case .switchTo(let language):
+            switchToWhisper(language: language)
+        case .settleArabic:
             // No later detection can run (see maybeDetectLanguage), so Audar keeps this recording.
             settleLanguage()
+        case .hold:
+            break
         }
     }
 
@@ -817,10 +853,15 @@ actor IncrementalTranscriber {
         keepFormatterWarm()
 
         if detectsLanguage {
-            // Not enough speech yet for the in-recording detection: detect on everything now,
-            // while the last segment is transcribed (as the full-file path does).
-            if detectionRuns == 0 && detectionTask == nil { startDetection() }
+            // Stopped before the detections decided (too little speech for the first, or the
+            // first one held and the second never ran): detect on everything now, while the
+            // last segment is transcribed. With a first detection behind it, this one must
+            // agree with it to leave Arabic (see languageDecision).
             while let task = detectionTask { await task.value }
+            if abandoned == nil && detectionRuns < 2 && !liveGate.isSettled {
+                startDetection(coversWholeRecording: true)
+                while let task = detectionTask { await task.value }
+            }
             if let abandoned { return .fallback(abandoned) }
             // No detection runs after this point: the recording stays on Audar.
             settleLanguage()
