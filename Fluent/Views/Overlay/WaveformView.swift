@@ -1,57 +1,60 @@
 import SwiftUI
 import Charts
 
-// Compact waveform for minimal recording overlay
+// Compact waveform for minimal recording overlay.
+//
+// One bar per level sample (~50 ms each), newest on the right, so the row scrolls steadily
+// instead of re-sampling the whole history: picking every n-th sample of a growing buffer
+// made bars jump to unrelated values on every update. Drawn in a single Canvas pass.
 struct CompactWaveformView: View {
     let levels: [Float]
     let isRecording: Bool
 
     private let barCount = 20
+    private let spacing: CGFloat = 2
 
     var body: some View {
-        GeometryReader { geometry in
-            HStack(spacing: 2) {
-                ForEach(Array(displayLevels.enumerated()), id: \.offset) { _, level in
-                    RoundedRectangle(cornerRadius: 1)
-                        .fill(barColor(for: level))
-                        .frame(
-                            width: barWidth(in: geometry),
-                            height: max(3, CGFloat(level) * geometry.size.height)
-                        )
-                }
+        Canvas { context, size in
+            let bars = Self.recentLevels(levels, count: barCount)
+            let barWidth = max(1, (size.width - spacing * CGFloat(barCount - 1)) / CGFloat(barCount))
+            // A silent bar is a round dot as wide as the bar.
+            let minHeight = min(barWidth, size.height)
+
+            for (index, level) in bars.enumerated() {
+                let height = max(minHeight, CGFloat(level) * size.height)
+                let rect = CGRect(
+                    x: CGFloat(index) * (barWidth + spacing),
+                    y: (size.height - height) / 2,
+                    width: barWidth,
+                    height: height
+                )
+                context.fill(
+                    Path(roundedRect: rect, cornerRadius: barWidth / 2),
+                    with: .color(barColor(for: level))
+                )
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         }
-        .animation(.easeOut(duration: 0.1), value: levels)
+        .accessibilityHidden(true)
     }
 
-    private var displayLevels: [Float] {
-        if levels.count >= barCount {
-            return sampleLevels(levels, targetCount: barCount)
-        } else if levels.isEmpty {
-            return Array(repeating: Float(0.1), count: barCount)
-        } else {
-            let padding = Array(repeating: Float(0.1), count: barCount - levels.count)
-            return padding + levels
-        }
+    /// The newest `count` samples mapped to bar heights, oldest first. Until enough audio has
+    /// arrived the left side holds silent bars, so the row always spans its full width.
+    static func recentLevels(_ source: [Float], count: Int) -> [Float] {
+        let recent = source.suffix(count).map(displayLevel)
+        return Array(repeating: 0, count: count - recent.count) + recent
     }
 
-    private func sampleLevels(_ source: [Float], targetCount: Int) -> [Float] {
-        let step = Double(source.count) / Double(targetCount)
-        return (0..<targetCount).map { i in
-            let index = min(Int(Double(i) * step), source.count - 1)
-            return source[index]
-        }
-    }
-
-    private func barWidth(in geometry: GeometryProxy) -> CGFloat {
-        let totalSpacing = CGFloat(barCount - 1) * 2
-        return (geometry.size.width - totalSpacing) / CGFloat(barCount)
+    /// Maps the meter value (0…1 for −60…0 dB) to a bar height (0…1), so room noise stays a
+    /// flat row of dots and ordinary speech reaches the top of the bar instead of half of it.
+    static func displayLevel(_ level: Float) -> Float {
+        let floor: Float = 0.25    // about −45 dB: quiet room
+        let ceiling: Float = 0.8   // about −12 dB: clear speech
+        return min(max((level - floor) / (ceiling - floor), 0), 1)
     }
 
     private func barColor(for level: Float) -> Color {
         if isRecording {
-            let intensity = min(1.0, Double(level) * 2)
+            let intensity = Double(level)
             return Color(
                 red: intensity,
                 green: 0.2,

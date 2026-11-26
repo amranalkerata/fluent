@@ -8,7 +8,10 @@ import UserNotifications
 class AppState: ObservableObject {
     // MARK: - Recording State
     @Published var isRecording = false
-    @Published var recordingDuration: TimeInterval = 0
+    /// Read from `audioService` rather than mirrored here: mirroring republished `AppState`
+    /// 10×/s while recording, redrawing every view that observes it. Views that show the
+    /// clock observe `audioService` themselves (`RecordingDurationText`).
+    var recordingDuration: TimeInterval { audioService.recordingDuration }
     @Published var lastTranscription: String?
     @Published var isTranscribing = false
     @Published var transcriptionError: String?
@@ -58,14 +61,11 @@ class AppState: ObservableObject {
     }
 
     private func setupBindings() {
-        // Sync audio service recording state
+        // Sync audio service recording state. Both live on the main actor, so this is copied
+        // synchronously: hopping through the main queue left `isRecording` false for a moment
+        // after the overlay window appeared, and the window then sized itself to an empty pill.
         audioService.$isRecording
-            .receive(on: DispatchQueue.main)
             .assign(to: &$isRecording)
-
-        audioService.$recordingDuration
-            .receive(on: DispatchQueue.main)
-            .assign(to: &$recordingDuration)
 
         // Observe ModelManager.state changes to trigger UI updates for isModelLoading
         ModelManager.shared.$state

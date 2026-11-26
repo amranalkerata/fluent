@@ -37,7 +37,6 @@ class AudioRecordingService: ObservableObject {
     @Published var isRecording = false
     @Published var audioLevels: [Float] = []
     @Published var recordingDuration: TimeInterval = 0
-    @Published var currentLevel: Float = 0
 
     private var audioEngine: AVAudioEngine?
     private var audioFile: AVAudioFile?
@@ -73,11 +72,13 @@ class AudioRecordingService: ObservableObject {
             .sink { [weak self] levels in
                 guard let self = self, !levels.isEmpty else { return }
                 let average = levels.reduce(0, +) / Float(levels.count)
-                self.currentLevel = average
-                self.audioLevels.append(average)
-                if self.audioLevels.count > self.maxLevelSamples {
-                    self.audioLevels.removeFirst()
+                // Build the new array first and publish it once: two mutations would mean two redraws.
+                var updated = self.audioLevels
+                updated.append(average)
+                if updated.count > self.maxLevelSamples {
+                    updated.removeFirst(updated.count - self.maxLevelSamples)
                 }
+                self.audioLevels = updated
             }
             .store(in: &cancellables)
     }
@@ -182,9 +183,11 @@ class AudioRecordingService: ObservableObject {
         }
 
         self.audioEngine = engine
-        self.isRecording = true
-        self.recordingStartTime = Date()
+        // Reset before `isRecording` flips, so the overlay never shows the last recording's time.
+        self.recordingDuration = 0
         self.audioLevels.removeAll()
+        self.recordingStartTime = Date()
+        self.isRecording = true
         self.allLevelSamples.removeAll()
         startDurationTimer()
     }
@@ -296,8 +299,10 @@ class AudioRecordingService: ObservableObject {
     // MARK: - Duration Timer
 
     private func startDurationTimer() {
-        durationTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-            Task { @MainActor in
+        durationTimer?.invalidate()
+        let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
+            // The timer is on the main run loop, so this already runs on the main actor.
+            MainActor.assumeIsolated {
                 guard let self = self, let startTime = self.recordingStartTime else { return }
                 self.recordingDuration = Date().timeIntervalSince(startTime)
 
@@ -307,6 +312,9 @@ class AudioRecordingService: ObservableObject {
                 }
             }
         }
+        // `.common` keeps the clock ticking while a menu or scroll view is tracking the mouse.
+        RunLoop.main.add(timer, forMode: .common)
+        durationTimer = timer
     }
 
     // MARK: - File Management

@@ -50,7 +50,7 @@ struct RecordingStatusBar: View {
             // Status text
             Group {
                 if appState.isRecording {
-                    Text(formatDuration(appState.recordingDuration))
+                    RecordingDurationText(audioService: appState.audioService)
                         .font(.Fluent.monoSmall)
                 } else if appState.isTranscribing {
                     Text("Transcribing...")
@@ -85,13 +85,6 @@ struct RecordingStatusBar: View {
                 .fill(FluentColors.surface)
         )
         .fluentShadow(.low)
-    }
-
-    private func formatDuration(_ duration: TimeInterval) -> String {
-        let minutes = Int(duration) / 60
-        let seconds = Int(duration) % 60
-        let tenths = Int((duration.truncatingRemainder(dividingBy: 1)) * 10)
-        return String(format: "%d:%02d.%d", minutes, seconds, tenths)
     }
 }
 

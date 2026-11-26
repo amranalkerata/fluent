@@ -18,7 +18,7 @@ struct MenuBarView: View {
                     Spacer()
 
                     if appState.isRecording {
-                        Text(formatDuration(appState.recordingDuration))
+                        RecordingDurationText(audioService: appState.audioService, showsTenths: false)
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(.secondary)
                     }
@@ -26,7 +26,7 @@ struct MenuBarView: View {
 
                 // Mini waveform when recording
                 if appState.isRecording {
-                    MiniWaveformView(levels: appState.audioService.audioLevels)
+                    MiniWaveformView(audioService: appState.audioService)
                         .frame(height: 24)
                 }
             }
@@ -121,12 +121,6 @@ struct MenuBarView: View {
             return "Ready"
         }
     }
-
-    private func formatDuration(_ duration: TimeInterval) -> String {
-        let minutes = Int(duration) / 60
-        let seconds = Int(duration) % 60
-        return String(format: "%d:%02d", minutes, seconds)
-    }
 }
 
 struct MenuBarButton: View {
@@ -171,7 +165,10 @@ struct MenuBarButton: View {
 }
 
 struct MiniWaveformView: View {
-    let levels: [Float]
+    /// Observed here, not read through `AppState`, which no longer republishes on every tick.
+    @ObservedObject var audioService: AudioRecordingService
+
+    private var levels: [Float] { audioService.audioLevels }
 
     var body: some View {
         GeometryReader { geometry in
